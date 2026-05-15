@@ -269,6 +269,8 @@
         <p>KeepSlip offers an optional feature that connects to your Gmail account to automatically find and import receipt emails. If you choose to enable this feature, KeepSlip requests read-only access to your Gmail inbox (<code>gmail.readonly</code> scope) via Google OAuth.</p>
         <br />
         <p>KeepSlip uses this access solely to identify emails that contain purchase receipts and to extract structured data from them (merchant name, date, and total amount). Raw email content, email bodies, and non-receipt emails are never read, stored, or shared. Only the extracted receipt data is saved to your account. You can revoke Gmail access at any time through your Google account settings or within the KeepSlip app, and your imported receipt data will be retained unless you delete it.</p>
+        <br />
+        <p>Where a receipt email contains an attachment (such as a PDF, PNG, or JPEG), KeepSlip downloads and stores that file so you can view the original receipt at any time within the app. Attachment files are stored securely and are only accessible by you. Raw email body content is never stored regardless of attachment type.</p>
       </div>
     </section>
 
