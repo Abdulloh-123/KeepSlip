@@ -12,10 +12,10 @@
 Every design decision serves this. If something adds friction, complexity, or hesitation — cut it.
 
 ## Aesthetic Direction
-- **Direction:** Clean & Confident — consumer-grade simplicity, NOT accounting software
-- **Decoration level:** Minimal — typography and whitespace carry all weight. The receipt is the visual.
-- **Mood:** Feels like a camera app crossed with a payments app. Fast, trusted, built for someone with dirty hands who needs this done in 10 seconds.
-- **What to avoid:** Corporate navy blue, dashboard complexity, form-like UIs, anything that signals "expense report"
+- **Direction:** Clean & Confident with category colour identity — consumer-grade simplicity, NOT accounting software
+- **Decoration level:** Intentional — each spend category has its own vivid colour. Colour does the organisational work; typography and whitespace carry everything else.
+- **Mood:** Bold teal header with a giant spend number. White page, multi-colour category dot avatars on cards, standard tab bar with teal FAB. Fast, trusted, alive — not clinical.
+- **What to avoid:** Uniform grey/teal-only cards, corporate navy, dashboard complexity, form-like UIs, anything that signals "expense report"
 
 ## Screens
 
@@ -39,14 +39,22 @@ Every design decision serves this. If something adds friction, complexity, or he
 ### Receipt List (home)
 - **Top:** Spend summary header — "This month: $X,XXX · N receipts" (skeleton placeholder while loading, not a spinner)
 - **Below header:** Chronological receipt cards (newest first)
-- **Empty state:** If Gmail not connected → nudge card "Import receipts from Gmail — find 6 months of receipts in 2 minutes" with teal Connect button. If Gmail connected but 0 receipts → "No receipts yet — tap + to scan your first one"
-- **FAB:** Large teal scan button, bottom center (always visible)
+- **Empty state:** If Gmail not connected → nudge card "Import receipts from Gmail — find 6 months of receipts in 2 minutes" with teal Connect button. If Gmail connected but 0 receipts → "No receipts yet — tap + to add your first one"
+- **Pending badge:** If any link receipts are unresolved → amber banner above card list: "3 receipts need your attention" with arrow → opens Email Import results filtered to pending
+- **FAB:** Large teal + button, bottom center (always visible) — opens Add Receipt bottom sheet
+
+### Add Receipt (bottom sheet — triggered by centre FAB)
+- Slides up from bottom over any screen
+- Handle bar at top (standard)
+- Title: "Add Receipt" (Cabinet Grotesk, 20px)
+- Three tappable rows, each 64px height, left icon + label:
+  1. **Scan Receipt** — Camera icon — opens Scan Screen
+  2. **Upload File** — Upload icon — opens file picker (image/PDF/any file)
+  3. **Import from Email** — Mail icon — triggers email agent run
+- Separator between rows: 1px `#F1F5F9`
+- Cancel link below (Ghost button, "Cancel")
 
 ### Scan Screen
-- **Full dark UI** — black background, receipt fills the frame
-- **Top:** "Scan Receipt" label + X to close
-- **Center:** Camera viewfinder with subtle corner guides
-- **Bottom:** Large teal 64px capture button, centered
 
 ### Receipt Detail
 - **Top:** Merchant name (Cabinet Grotesk, 32px) + date
@@ -55,11 +63,20 @@ Every design decision serves this. If something adds friction, complexity, or he
 - **Below:** Category tag (editable), source tag (scanned/email/tap)
 - **Bottom:** "View Original" button if PDF/image exists, "Mark as Business" toggle
 
-### Email Import (progress screen)
-- **Header:** "Importing receipts from Gmail"
-- **Live counter:** "Found 47 receipts so far..." (updates in real time, not a spinner)
-- **Below:** Live list of receipts appearing as they're found (merchant + amount, animated in)
-- **Bottom:** "Stop import" link (small, muted)
+### Email Import (progress + results screen)
+- **Header:** "Importing from Gmail" + X to close (closes to background, job continues server-side)
+- **Last checked badge:** "Last checked: 10 May 2026" (grey, DM Sans 13px) — hidden on first run
+- **Scanning state:**
+  - Live counter: "Found 47 receipts so far..." (updates via WebSocket, not a spinner)
+  - Below: Live list of receipts appearing as found (merchant + amount, animated in)
+  - Bottom: "Stop import" link (Ghost, muted)
+- **Results state (when done):**
+  - Section 1 — "Added" (green count badge): standard receipt cards, each newly imported
+  - Section 2 — "Needs your help" (amber count badge): link receipts that the agent couldn't download
+    - Each card shows: merchant name, email date, subject line
+    - Below each: collapsible "Find it in Gmail" block with formatted search query + date range
+    - CTA per card: "Upload Receipt" → opens file picker; once uploaded, card resolves and moves to Added
+  - Bottom: "Done" primary button (goes to Receipt List)
 
 ### Search
 - **Top:** Search bar (auto-focused on open)
@@ -79,12 +96,20 @@ Every design decision serves this. If something adds friction, complexity, or he
 Onboarding (Welcome → Gmail Connect → Camera Permission)
   ↓ (gmail connected)          ↓ (gmail skipped)
 Receipt List (populated)    Receipt List (empty + nudge card)
-  ↓ (tab: scan)
-Scan Screen → flash + processing → Receipt Detail
+  ↓ (FAB → Add sheet)
+  ├── Scan Receipt → Scan Screen → flash + processing → Receipt Detail
+  ├── Upload File → File Picker → processing → Receipt Detail
+  └── Import from Email → Email Import Progress
+        ↓ (job complete)
+        Email Import Results
+          ├── Added section (new receipts)
+          └── Needs Your Help section (link receipts)
+                ↓ (Upload Receipt per card)
+                File Picker → resolve pending → card moves to Added
   ↓ (tab: search)
 Search → Results → Receipt Detail
   ↓ (settings → gmail not connected)
-Gmail Connect → Scanning (live counter) → Celebration Screen → Receipt List
+Gmail Connect → Email Import Progress → Results → Receipt List
 ```
 
 ## First-Run Experience & Emotional Arc
@@ -110,6 +135,15 @@ Gmail Connect → Scanning (live counter) → Celebration Screen → Receipt Lis
 
 ## Interaction States
 
+### Add Receipt Bottom Sheet
+| State | What user sees |
+|-------|---------------|
+| Opening | Sheet slides up (300ms), backdrop dims |
+| Idle | 3 rows: Scan Receipt, Upload File, Import from Email |
+| Gmail not connected | "Import from Email" row shows amber dot + "Connect Gmail first" sub-label; tapping opens Gmail OAuth flow |
+| Email job already running | "Import from Email" row shows spinner + "Import in progress..." — tapping goes to Email Import Progress screen |
+| Closing | Sheet slides down on Cancel or backdrop tap |
+
 ### Scan Screen
 | State | What user sees |
 |-------|---------------|
@@ -133,11 +167,22 @@ Gmail Connect → Scanning (live counter) → Celebration Screen → Receipt Lis
 | State | What user sees |
 |-------|---------------|
 | Connecting | "Connecting to Gmail..." with brief animation |
-| Scanning | Live counter: "Found 47 receipts..." + receipts appearing in real time |
-| User closes app | Scan continues server-side (Celery job); push notification when done |
-| Done | "Import complete — 127 receipts added" with confetti micro-animation, CTA to view receipts |
+| Scanning (first run) | Live counter: "Found 47 receipts..." + receipts appearing in real time. Badge: "Scanning last 90 days" |
+| Scanning (re-run) | "Checking new emails since 10 May 2026..." + live counter |
+| User closes app mid-scan | Scan continues server-side (Celery job); push notification when done |
+| Done — receipts added | Results screen: Added section + Needs Your Help section (see IA above) |
+| Done — link receipts pending | Amber "Needs your help" section showing emails with inaccessible links; each has Gmail search terms |
+| Done — nothing new | "No new receipts since last check (10 May 2026)" with suggestion to scan paper receipts |
 | Auth error | "Gmail connection failed — tap to reconnect" with reconnect CTA |
-| No receipts found | "No receipt emails found in the last 6 months" with suggestion to scan paper receipts |
+| No receipts found (first run) | "No receipt emails found in the last 90 days" with suggestion to scan paper receipts |
+
+### Link Receipt (Needs Your Help card)
+| State | What user sees |
+|-------|---------------|
+| Awaiting upload | Amber-bordered card: merchant, email date, subject. Collapsed "Find it" block. "Upload Receipt" CTA |
+| Find it expanded | Gmail search query shown in monospace box, copyable. Date range in plain English |
+| Uploading | File picker opens; loading indicator on card while processing |
+| Resolved | Card moves to "Added" section with green tick, receipt added to main list |
 
 ### Receipt Detail
 | State | What user sees |
@@ -168,10 +213,10 @@ Gmail Connect → Scanning (live counter) → Celebration Screen → Receipt Lis
   - 3xl: 48px (hero moments)
 
 ## Color
-- **Approach:** Restrained — one accent, everything else is neutral
+- **Approach:** Teal anchor + category colour system — one primary accent, six category colours that carry the visual energy
 - **Background:** `#FAFAF9` (warm white — easier on eyes, high contrast outdoors)
 - **Surface/Cards:** `#FFFFFF`
-- **Border:** `#E5E7EB` (1px card border, no heavy shadow)
+- **Border:** `#F1F5F9` (1px card border, very subtle — lets category colours do the work)
 - **Text:** `#0C0C0C`
 - **Muted text:** `#6B7280`
 - **Accent:** `#0D9488` (deep teal — unowned in this category; not corporate blue, not accounting green)
@@ -180,6 +225,21 @@ Gmail Connect → Scanning (live counter) → Celebration Screen → Receipt Lis
 - **Error:** `#DC2626`
 - **Warning:** `#D97706`
 - **Dark mode (scan screen only):** `#000000` background, `#FFFFFF` text, `#0D9488` capture button
+
+### Category Colour System
+Each spend category has a fixed vivid colour used for the card avatar circle and any category tag.
+
+| Category | Avatar fill | Icon/text colour | Tag background |
+|----------|------------|-----------------|----------------|
+| Hardware | `#F59E0B` amber | `#FFFFFF` | `#FEF3C7` |
+| Fuel / Transport | `#06B6D4` cyan | `#FFFFFF` | `#CFFAFE` |
+| Groceries / Food | `#22C55E` green | `#FFFFFF` | `#DCFCE7` |
+| Office / Tech | `#8B5CF6` purple | `#FFFFFF` | `#EDE9FE` |
+| Travel / Ride | `#3B82F6` blue | `#FFFFFF` | `#DBEAFE` |
+| Dining / Cafe | `#F97316` orange | `#FFFFFF` | `#FFEDD5` |
+| Uncategorised | `#0D9488` teal | `#FFFFFF` | `#F0FDFA` |
+
+The avatar is a 40px circle (cornerRadius: 20) with a Lucide icon centred at 18px.
 
 ## Spacing
 - **Base unit:** 8px
@@ -193,9 +253,9 @@ Gmail Connect → Scanning (live counter) → Celebration Screen → Receipt Lis
 - **Approach:** Grid-disciplined — single column, predictable alignment
 - **Receipt feed:** Single-column list, cards stacked with 8px gap
 - **Card anatomy:** Logo circle (40px, teal bg) left → merchant name + date center → amount right (bold, Cabinet Grotesk)
-- **Scan button:** 64px circle, teal `#0D9488`, centered in bottom tab bar
-- **Bottom navigation:** 4 tabs — Receipts, Scan (oversized), Search, Profile
-- **Border radius:** sm: 8px (tags), md: 12px (cards), lg: 16px (sheets/modals), full: 9999px (scan button, avatar)
+- **Add button:** 64px circle, teal `#0D9488`, centered in bottom tab bar — tapping opens Add Receipt bottom sheet
+- **Bottom navigation:** 4 tabs — Receipts | Add (oversized +) | Search | Profile
+- **Border radius:** sm: 8px (tags), md: 12px (cards), lg: 16px (sheets/modals), full: 9999px (add button, avatar)
 
 ## Components
 
@@ -228,12 +288,21 @@ Gmail Connect → Scanning (live counter) → Celebration Screen → Receipt Lis
 - Business tag: `#0D9488` background, `#FFFFFF` text
 
 ### Receipt Card
-- Height: 72px, padding: 16px horizontal, 12px vertical
-- Border: 1px `#E5E7EB`
+- Height: 72px, padding: 14px vertical / 16px horizontal
+- Border: 1px `#F1F5F9` (inside stroke)
 - Border radius: 12px
-- Left: 40px circle (teal `#0D9488` bg, white letter initial) — merchant logo placeholder
-- Center: Merchant name (DM Sans, 15px, 600, `#0C0C0C`) / Date below (DM Sans, 13px, `#6B7280`)
-- Right: Amount (Cabinet Grotesk, 17px, 600, `#0C0C0C`) / Category tag below
+- Left: 40px circle (category colour bg — see Category Colour System, white Lucide icon 18px centred)
+- Center: Merchant name (DM Sans, 15px, 600, `#0C0C0C`) / Date + category below (DM Sans, 12px, `#6B7280`, format: "Today, 2:14 PM · Hardware")
+- Right: Amount (Cabinet Grotesk, 16px, 700, `#0C0C0C`)
+- Gap between avatar → info → amount: 12px
+
+### Category Filter Row
+- Sits between the header and the card list
+- Horizontal scrollable row, padding: 12px vertical / 16px horizontal, gap: 8px
+- Pills: cornerRadius 9999, padding: 7px vertical / 14px horizontal
+- Active pill: `#0D9488` bg, `#FFFFFF` text, DM Sans 13px 600
+- Inactive pill: `#F4F4F5` bg, `#6B7280` text, DM Sans 13px 500
+- Categories shown: All, Hardware, Fuel, Food, Office (+ any active categories from the user's receipts)
 
 ### Bottom Sheet / Modal
 - Border radius: 16px top corners only
@@ -254,7 +323,7 @@ Gmail Connect → Scanning (live counter) → Celebration Screen → Receipt Lis
 - **Touch targets:** Minimum 44×44px for all interactive elements. Scan button is 64px — fine. Receipt card row is 72px — fine. Tab bar icons must have 44px tap area even if icon is smaller.
 - **Contrast:** Text `#0C0C0C` on `#FAFAF9` background = 19:1 (exceeds WCAG AA 4.5:1). Muted text `#6B7280` on white = 4.6:1 (passes AA). Teal `#0D9488` on white = 4.5:1 (passes AA minimum — verify with contrast checker before shipping).
 - **Colour blindness:** Teal-highlighted unconfirmed OCR fields must also have a non-colour indicator (icon or underline) — don't rely on colour alone.
-- **Screen reader (VoiceOver / TalkBack):** Every interactive element needs an `accessibilityLabel`. Receipt cards: "[Merchant name], [amount], [date]". Scan button: "Scan receipt". Tab icons: "Receipts", "Scan", "Search", "Profile".
+- **Screen reader (VoiceOver / TalkBack):** Every interactive element needs an `accessibilityLabel`. Receipt cards: "[Merchant name], [amount], [date]". Add button: "Add receipt". Tab icons: "Receipts", "Add", "Search", "Profile". Add sheet rows: "Scan receipt", "Upload file", "Import from email".
 - **Font scaling:** UI must not break when user has system font size set to large. Test at 2× system font size.
 - **Motion sensitivity:** The count-up animation and card stagger must respect `prefers-reduced-motion` — fade in immediately instead of animating.
 
@@ -268,7 +337,7 @@ Gmail Connect → Scanning (live counter) → Celebration Screen → Receipt Lis
 
 ## Icons
 - **Library:** Lucide Icons (`lucide-react-native`) — clean, minimal, consistent weight. Zero extra setup in Expo.
-- **Tab icons:** Home (receipt list), Camera (scan), Search, User (profile)
+- **Tab icons:** Home (receipt list), Plus (add — centre FAB), Search, User (profile)
 - **Size:** 24px standard, 20px in dense contexts (tags, inline)
 - **Color:** `#6B7280` muted (inactive tab), `#0D9488` teal (active tab), `#0C0C0C` (inline icons)
 
@@ -297,3 +366,11 @@ Gmail Connect → Scanning (live counter) → Celebration Screen → Receipt Lis
 | 2026-05-17 | Lucide Icons | Default Expo library, clean minimal style, zero extra setup |
 | 2026-05-17 | No subscription tier at launch | All features free; tax export reports deferred to later version |
 | 2026-05-17 | Spend summaries free for all users | Category breakdowns (tools, groceries, fuel, etc.) available to everyone |
+| 2026-05-17 | Category colour system — 6 vivid colours per spend type | Makes receipt cards scannable at a glance; colour does the organisational work instead of text labels |
+| 2026-05-17 | Receipt card avatar = category colour circle + Lucide icon | Replaces plain teal initial circle — each category is instantly identifiable by colour and icon shape |
+| 2026-05-17 | Category filter row below header | Horizontal pill row lets users filter by spend type without going to search; active = teal, inactive = grey |
+| 2026-05-17 | Card border changed from `#E5E7EB` to `#F1F5F9` | Softer border so category avatar colours pop without competing with the card edge |
+| 2026-05-17 | Centre FAB changed from Scan to Add (+) | Upload and Email Import need equal fast access; a 3-option bottom sheet adds zero navigation depth |
+| 2026-05-17 | Email sync = manual re-run (Choice 2) with delta from last check | Simpler infrastructure, transparent to user, no background OAuth concerns; auto-sync deferred to Pro tier |
+| 2026-05-17 | Link receipts → "Needs Your Help" section with Gmail search terms | Agent cannot follow external links; guided manual recovery with exact search query is better than silent failure |
+| 2026-05-17 | Pending link receipts surfaced as amber banner on Receipt List | Unresolved items stay visible until actioned — user should not have to remember to check |

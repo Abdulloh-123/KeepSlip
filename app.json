@@ -1,0 +1,56 @@
+{
+  "expo": {
+    "name": "IReceipt",
+    "slug": "ireceipt",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "scheme": "ireceipt",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#F8FAFC"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.abdullohkodirov.ireceipt",
+      "infoPlist": {
+        "NSCameraUsageDescription": "IReceipt uses the camera to scan paper receipts.",
+        "NSPhotoLibraryUsageDescription": "IReceipt reads photos to import receipt images.",
+        "LSApplicationQueriesSchemes": [
+          "googlegmail"
+        ]
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#F8FAFC"
+      },
+      "package": "com.ireceipt.app"
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "static",
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-font",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "IReceipt uses the camera to scan paper receipts."
+        }
+      ],
+      [
+        "expo-secure-store"
+      ],
+      "expo-asset"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}
