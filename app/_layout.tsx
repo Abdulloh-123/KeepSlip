@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Stack, useRouter, useSegments } from 'expo-router';
+import { Stack, useRootNavigationState, useRouter, useSegments } from 'expo-router';
 import {
   useFonts,
   DMSans_400Regular,
@@ -20,6 +20,7 @@ const ONBOARDING_KEY = 'onboarding_complete';
 export default function RootLayout() {
   const router = useRouter();
   const segments = useSegments();
+  const rootNavigationState = useRootNavigationState();
   const [authChecked, setAuthChecked] = useState(false);
 
   const [fontsLoaded] = useFonts({
@@ -38,6 +39,8 @@ export default function RootLayout() {
   }, [fontsLoaded, authChecked]);
 
   useEffect(() => {
+    if (!rootNavigationState?.key) return;
+
     let mounted = true;
 
     async function routeForSession(session: Awaited<ReturnType<typeof supabase.auth.getSession>>['data']['session']) {
@@ -74,9 +77,9 @@ export default function RootLayout() {
       mounted = false;
       subscription.unsubscribe();
     };
-  }, [segments]);
+  }, [rootNavigationState?.key, segments]);
 
-  if (!fontsLoaded || !authChecked) return null;
+  if (!fontsLoaded) return null;
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
