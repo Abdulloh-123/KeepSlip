@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useCallback, useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -9,49 +9,44 @@ import {
   Linking,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Mail, Download, ShieldCheck, TriangleAlert, Trash2, FileText, LogOut } from 'lucide-react-native';
-import { supabase } from '@/lib/supabase';
-import { isGmailConnected, revokeGmailToken } from '@/lib/gmail';
+import { useFocusEffect, useRouter } from 'expo-router';
+import { Download, ShieldCheck, TriangleAlert, Trash2, FileText, LogOut } from 'lucide-react-native';
+import { countPendingEmailReceipts, supabase } from '@/lib/supabase';
 
 export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
+  const router = useRouter();
   const [userEmail, setUserEmail] = useState('');
-  const [gmailConnected, setGmailConnected] = useState(false);
-  const [importCount, setImportCount] = useState<number | null>(null);
+  const [attentionCount, setAttentionCount] = useState<number | null>(null);
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
       setUserEmail(data.user?.email ?? '');
     });
-    isGmailConnected().then(setGmailConnected);
-    supabase
-      .from('receipts')
-      .select('id', { count: 'exact', head: true })
-      .then(({ count }) => setImportCount(count ?? 0));
   }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      countPendingEmailReceipts()
+        .then(setAttentionCount)
+        .catch(() => setAttentionCount(0));
+    }, [])
+  );
 
   const initials = userEmail
     ? userEmail.split('@')[0].slice(0, 2).toUpperCase()
     : 'U';
 
-  async function handleDisconnectGmail() {
-    Alert.alert('Disconnect Gmail', 'Remove Gmail access?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Disconnect',
-        style: 'destructive',
-        onPress: async () => {
-          await revokeGmailToken();
-          setGmailConnected(false);
-        },
-      },
-    ]);
-  }
-
   async function handleSignOut() {
     Alert.alert('Sign out', 'Are you sure?', [
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Sign out', style: 'destructive', onPress: () => supabase.auth.signOut() },
+      {
+        text: 'Sign out',
+        style: 'destructive',
+        onPress: async () => {
+          await supabase.auth.signOut();
+        },
+      },
     ]);
   }
 
@@ -97,30 +92,8 @@ export default function SettingsScreen() {
           </View>
         </View>
 
-        {/* Connection + export cards */}
+        {/* Export card */}
         <View style={styles.cardsSection}>
-          {/* Gmail card */}
-          <TouchableOpacity
-            style={styles.card}
-            onPress={gmailConnected ? handleDisconnectGmail : undefined}
-            activeOpacity={gmailConnected ? 0.7 : 1}
-          >
-            <View style={[styles.cardAvatar, { backgroundColor: '#DCFCE7' }]}>
-              <Mail size={18} color="#059669" />
-            </View>
-            <View style={styles.cardInfo}>
-              <Text style={styles.cardTitle}>Gmail</Text>
-              <Text style={styles.cardSub}>
-                {gmailConnected
-                  ? `Connected${importCount !== null ? ` · ${importCount} receipts imported` : ''}`
-                  : 'Not connected'}
-              </Text>
-            </View>
-            {gmailConnected && (
-              <Text style={styles.greenDot}>●</Text>
-            )}
-          </TouchableOpacity>
-
           {/* Export CSV card */}
           <TouchableOpacity style={styles.card} activeOpacity={0.7}>
             <View style={[styles.cardAvatar, { backgroundColor: '#ECFDF5' }]}>
@@ -129,6 +102,25 @@ export default function SettingsScreen() {
             <View style={styles.cardInfo}>
               <Text style={styles.cardTitle}>Export as CSV</Text>
               <Text style={styles.cardSub}>Download all your receipts</Text>
+            </View>
+            <Text style={styles.chevron}>›</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.card}
+            onPress={() => router.push('/email-attention')}
+            activeOpacity={0.7}
+          >
+            <View style={[styles.cardAvatar, { backgroundColor: '#FFFBEB' }]}>
+              <TriangleAlert size={18} color="#D97706" />
+            </View>
+            <View style={styles.cardInfo}>
+              <Text style={styles.cardTitle}>Receipts need attention</Text>
+              <Text style={styles.cardSub}>
+                {attentionCount === null
+                  ? 'Checking unresolved email receipts'
+                  : `${attentionCount} waiting for manual upload`}
+              </Text>
             </View>
             <Text style={styles.chevron}>›</Text>
           </TouchableOpacity>
@@ -276,11 +268,6 @@ const styles = StyleSheet.create({
     fontFamily: 'DMSans-Regular',
     fontSize: 12,
     color: '#6B7280',
-  },
-  greenDot: {
-    fontFamily: 'DMSans-Regular',
-    fontSize: 14,
-    color: '#059669',
   },
   chevron: {
     fontFamily: 'DMSans-Bold',

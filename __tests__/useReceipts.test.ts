@@ -8,16 +8,21 @@ jest.mock('../lib/supabase', () => ({
 
 const mockFetchReceipts = supabaseLib.fetchReceipts as jest.Mock;
 
+const now = new Date();
+const thisMonthDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-15`;
+const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 10);
+const lastMonthDate = `${lastMonth.getFullYear()}-${String(lastMonth.getMonth() + 1).padStart(2, '0')}-10`;
+
 const JUNE_RECEIPT = {
   id: '1', user_id: 'u1', source: 'manual_scan' as const,
-  merchant_name: 'Bunnings', date: '2026-05-15', total_amount: 84.5,
+  merchant_name: 'Bunnings', date: thisMonthDate, total_amount: 84.5,
   currency: 'AUD', category: 'Tools & Materials', is_business: false,
   line_items: [], image_url: null, pdf_url: null,
   email_source: null, email_message_id: null, attachment_type: null, raw_text: null, created_at: '',
 };
 
 const LAST_MONTH_RECEIPT = {
-  ...JUNE_RECEIPT, id: '2', date: '2026-04-10', total_amount: 20,
+  ...JUNE_RECEIPT, id: '2', date: lastMonthDate, total_amount: 20,
 };
 
 describe('useReceipts', () => {
@@ -45,7 +50,7 @@ describe('useReceipts', () => {
     const { result } = renderHook(() => useReceipts());
 
     await waitFor(() => expect(result.current.loading).toBe(false));
-    // Only JUNE_RECEIPT (May 2026) should count if test runs in May 2026
+    // Only the current-month receipt should count, regardless of when the test runs.
     expect(result.current.thisMonthSpend).toBe(84.5);
     expect(result.current.thisMonthCount).toBe(1);
   });

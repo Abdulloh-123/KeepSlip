@@ -10,44 +10,93 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, content-type',
 };
 
-// How many emails to fully process per run. Change this to scan more or fewer emails.
 const SCAN_CAP = 50;
-
-// How many pages of Gmail search results to fetch (50 per page = up to 500 IDs total).
 const MAX_ID_PAGES = 10;
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+type ReceiptData = {
+  merchant_name: string;
+  date: string;
+  total_amount: number;
+  currency: string;
+  category: string | null;
+  line_items: Array<{ description: string; amount: number }>;
+};
+
+type MsgMeta = {
+  id: string;
+  subject: string;
+  from: string;
+  internalDate: string;
+};
+
+type AttachmentCandidate = {
+  filename: string;
+  mimeType: string;
+  attachmentId: string | null;
+  inlineData: string | null;
+};
+
+type ProcessResult =
+  | { kind: 'imported'; receipt_id: string; message_id: string }
+  | { kind: 'link_only'; receipt_id: string; message_id: string }
+  | { kind: 'attention'; pending_id: string; message_id: string }
+  | { kind: 'skip'; message_id: string }
+  | { kind: 'retry'; message_id: string };
+
+function decodeBase64UrlToString(data: string): string {
+  return atob(data.replace(/-/g, '+').replace(/_/g, '/'));
+}
+
+function decodeBase64UrlToBytes(data: string): Uint8Array {
+  const binary = decodeBase64UrlToString(data);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 8192) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
+  }
+  return btoa(binary);
+}
+
+function cleanHtml(raw: string): string {
+  return raw.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+}
 
 function extractBody(payload: any, depth = 0): string {
   if (!payload || depth > 5) return '';
-  const decode = (data: string) =>
-    atob(data.replace(/-/g, '+').replace(/_/g, '/'));
 
   if (payload.body?.data && !payload.parts) {
-    const raw = decode(payload.body.data);
+    const raw = decodeBase64UrlToString(payload.body.data);
     if (payload.mimeType === 'text/plain') return raw;
-    if (payload.mimeType === 'text/html')
-      return raw.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+    if (payload.mimeType === 'text/html') return cleanHtml(raw);
   }
 
   const parts: any[] = payload.parts ?? [];
-  for (const part of parts)
-    if (part.mimeType === 'text/plain' && part.body?.data)
-      return decode(part.body.data);
-  for (const part of parts)
-    if (part.mimeType?.startsWith('multipart/')) {
-      const t = extractBody(part, depth + 1);
-      if (t.length > 20) return t;
-    }
   for (const part of parts) {
-    if (part.mimeType === 'text/html' && part.body?.data)
-      return decode(part.body.data).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-    if (part.mimeType?.startsWith('multipart/')) {
-      const t = extractBody(part, depth + 1);
-      if (t.length > 20) return t;
+    if (part.mimeType === 'text/plain' && part.body?.data) {
+      return decodeBase64UrlToString(part.body.data);
     }
   }
-  if (payload.body?.data) return decode(payload.body.data);
+  for (const part of parts) {
+    if (part.mimeType?.startsWith('multipart/')) {
+      const text = extractBody(part, depth + 1);
+      if (text.length > 20) return text;
+    }
+  }
+  for (const part of parts) {
+    if (part.mimeType === 'text/html' && part.body?.data) {
+      return cleanHtml(decodeBase64UrlToString(part.body.data));
+    }
+    if (part.mimeType?.startsWith('multipart/')) {
+      const text = extractBody(part, depth + 1);
+      if (text.length > 20) return text;
+    }
+  }
+  if (payload.body?.data) return decodeBase64UrlToString(payload.body.data);
   return '';
 }
 
@@ -67,20 +116,24 @@ function toIsoTimestamp(internalDate: unknown): string | null {
   return new Date(ms).toISOString();
 }
 
-// Builds a Gmail search query the user can paste to find a specific email.
-function gmailSearchHint(from: string, internalDate: string): string {
+function gmailSearchHint(from: string, internalDate: string, subject: string): string {
   const emailMatch = from.match(/<([^>]+)>/);
   const sender = emailMatch ? emailMatch[1] : from.replace(/[<>]/g, '').trim();
+  const parts: string[] = [];
+  if (sender) parts.push(`from:${sender}`);
   const ms = Number(internalDate);
-  if (!Number.isFinite(ms) || ms <= 0) return sender ? `from:(${sender})` : '';
-  const pad = (n: number) => String(n).padStart(2, '0');
-  const fmt = (d: Date) => `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())}`;
-  const date = new Date(ms);
-  const before = new Date(ms); before.setDate(before.getDate() + 2);
-  return `from:(${sender}) after:${fmt(date)} before:${fmt(before)}`;
+  if (Number.isFinite(ms) && ms > 0) {
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const fmt = (d: Date) => `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())}`;
+    const date = new Date(ms);
+    const before = new Date(ms);
+    before.setDate(before.getDate() + 2);
+    parts.push(`after:${fmt(date)}`, `before:${fmt(before)}`);
+  }
+  if (!parts.length && subject) parts.push(subject.slice(0, 80));
+  return parts.join(' ');
 }
 
-// Run async tasks in parallel batches of `size`, serially between batches.
 async function runBatches<T, R>(items: T[], size: number, fn: (item: T) => Promise<R>): Promise<R[]> {
   const results: R[] = [];
   for (let i = 0; i < items.length; i += size) {
@@ -90,30 +143,308 @@ async function runBatches<T, R>(items: T[], size: number, fn: (item: T) => Promi
   return results;
 }
 
-// ─── Header-level receipt filter ─────────────────────────────────────────────
+async function findReceiptIdForEmail(
+  supabase: any,
+  userId: string,
+  emailMessageId: string
+): Promise<string | null> {
+  const { data } = await supabase
+    .from('receipts')
+    .select('id')
+    .eq('user_id', userId)
+    .eq('email_message_id', emailMessageId)
+    .maybeSingle();
+  return (data as any)?.id ?? null;
+}
 
 const RECEIPT_SUBJECT_KEYWORDS = [
-  'receipt', 'invoice', 'order', 'payment', 'booking', 'reservation',
-  'confirmation', 'tax invoice', 'bill', 'purchase', 'transaction',
-  'delivered', 'shipment', 'your order', 'order details',
+  'receipt', 'e-receipt', 'ereceipt', 'invoice', 'tax invoice', 'tax receipt',
+  'tax summary', 'order', 'order confirmation', 'order details', 'order received',
+  'thanks for your order', 'payment', 'payment confirmation', 'payment received',
+  'paid', 'purchase', 'purchase confirmation', 'proof of purchase', 'transaction',
+  'bill', 'billing', 'statement', 'subscription', 'booking', 'reservation',
+  'itinerary', 'ticket', 'fare', 'delivered', 'delivery confirmation', 'shipment',
+  'shipped', 'GST', 'VAT',
 ];
 
 const RECEIPT_FROM_PATTERNS = [
-  'receipt', 'invoice', 'orders', 'billing', 'payment',
-  'noreply', 'no-reply', 'donotreply', 'do-not-reply',
-  'notifications', 'confirm', 'booking',
+  'receipt', 'invoice', 'orders', 'order', 'billing', 'payment', 'payments',
+  'noreply', 'no-reply', 'donotreply', 'do-not-reply', 'notifications',
+  'confirm', 'confirmation', 'booking', 'reservation', 'sales', 'store',
+  'shop', 'accounts', 'statement',
 ];
 
 function looksLikeReceipt(subject: string, from: string): boolean {
   const s = subject.toLowerCase();
   const f = from.toLowerCase();
   return (
-    RECEIPT_SUBJECT_KEYWORDS.some((kw) => s.includes(kw)) ||
+    RECEIPT_SUBJECT_KEYWORDS.some((kw) => s.includes(kw.toLowerCase())) ||
     RECEIPT_FROM_PATTERNS.some((p) => f.includes(p))
   );
 }
 
-// ─── Main handler ─────────────────────────────────────────────────────────────
+function quoteSearchTerm(term: string): string {
+  return /[^a-z0-9_-]/i.test(term) ? `"${term}"` : term;
+}
+
+function inferredMimeType(filename: string, mimeType: string): string {
+  const lower = filename.toLowerCase();
+  if (mimeType?.startsWith('image/') || mimeType === 'application/pdf') return mimeType;
+  if (lower.endsWith('.pdf')) return 'application/pdf';
+  if (lower.endsWith('.png')) return 'image/png';
+  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
+  if (lower.endsWith('.webp')) return 'image/webp';
+  return mimeType;
+}
+
+function isSupportedAttachment(filename: string, mimeType: string): boolean {
+  const type = inferredMimeType(filename, mimeType);
+  return type === 'application/pdf' || type.startsWith('image/');
+}
+
+function collectAttachmentCandidates(payload: any, out: AttachmentCandidate[] = []): AttachmentCandidate[] {
+  if (!payload) return out;
+  const filename = String(payload.filename ?? '');
+  const mimeType = inferredMimeType(filename, String(payload.mimeType ?? ''));
+  const attachmentId = payload.body?.attachmentId ? String(payload.body.attachmentId) : null;
+  const inlineData = payload.body?.data ? String(payload.body.data) : null;
+
+  if (filename && isSupportedAttachment(filename, mimeType) && (attachmentId || inlineData)) {
+    out.push({ filename, mimeType, attachmentId, inlineData });
+  }
+
+  for (const part of payload.parts ?? []) collectAttachmentCandidates(part, out);
+  return out;
+}
+
+function extensionFor(filename: string, mimeType: string): string {
+  const lower = filename.toLowerCase();
+  if (lower.endsWith('.pdf')) return 'pdf';
+  if (lower.endsWith('.png')) return 'png';
+  if (lower.endsWith('.webp')) return 'webp';
+  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'jpg';
+  if (mimeType === 'application/pdf') return 'pdf';
+  if (mimeType === 'image/png') return 'png';
+  if (mimeType === 'image/webp') return 'webp';
+  return 'jpg';
+}
+
+async function downloadAttachmentBytes(
+  accessToken: string,
+  messageId: string,
+  attachment: AttachmentCandidate
+): Promise<Uint8Array | null> {
+  if (attachment.inlineData) return decodeBase64UrlToBytes(attachment.inlineData);
+  if (!attachment.attachmentId) return null;
+
+  const resp = await fetch(
+    `https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageId}/attachments/${attachment.attachmentId}`,
+    { headers: { Authorization: `Bearer ${accessToken}` } }
+  );
+  if (!resp.ok) return null;
+  const data = await resp.json();
+  return typeof data.data === 'string' ? decodeBase64UrlToBytes(data.data) : null;
+}
+
+async function uploadAttachment(
+  supabase: any,
+  userId: string,
+  messageId: string,
+  attachment: AttachmentCandidate,
+  bytes: Uint8Array
+): Promise<string | null> {
+  const ext = extensionFor(attachment.filename, attachment.mimeType);
+  const safeMessageId = messageId.replace(/[^a-zA-Z0-9_-]/g, '');
+  const path = `${userId}/${Date.now()}-${safeMessageId}.${ext}`;
+  const { error } = await supabase.storage.from('receipts').upload(path, bytes, {
+    contentType: attachment.mimeType,
+    upsert: false,
+  });
+  return error ? null : path;
+}
+
+async function callClaude(body: Record<string, unknown>): Promise<any | null> {
+  const resp = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': ANTHROPIC_API_KEY,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) return null;
+  const data = await resp.json();
+  const rawText = (data.content?.[0]?.text ?? '').trim();
+  const cleaned = rawText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
+  if (!cleaned || cleaned === 'null') return null;
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    return null;
+  }
+}
+
+function normalizeReceipt(raw: Record<string, unknown>, fallbackDate: string | null): ReceiptData | null {
+  const merchant = String(raw.merchant_name ?? '').trim();
+  const amount = Number(raw.total_amount);
+  if (!merchant || !Number.isFinite(amount) || amount <= 0) return null;
+  const date = String(raw.date ?? fallbackDate?.slice(0, 10) ?? new Date().toISOString().slice(0, 10));
+  return {
+    merchant_name: merchant,
+    date,
+    total_amount: amount,
+    currency: String(raw.currency ?? 'AUD').slice(0, 3).toUpperCase(),
+    category: raw.category ? String(raw.category) : null,
+    line_items: Array.isArray(raw.line_items) ? raw.line_items as ReceiptData['line_items'] : [],
+  };
+}
+
+async function parseReceiptAttachment(
+  bytes: Uint8Array,
+  mimeType: string,
+  fallbackDate: string | null
+): Promise<ReceiptData | null> {
+  const prompt = `Extract receipt or invoice data from this attached receipt file. Return ONLY valid JSON with this shape:
+{"merchant_name":"string","date":"YYYY-MM-DD","total_amount":number,"currency":"3-letter code","category":"one of: Food & Drink, Transport, Tools & Materials, Office, Clothing, Health, Entertainment, Accommodation, Utilities, Other","line_items":[{"description":"string","amount":number}]}
+If this file is not a receipt or invoice, return null.`;
+
+  const contentBlock = mimeType === 'application/pdf'
+    ? { type: 'document', source: { type: 'base64', media_type: mimeType, data: bytesToBase64(bytes) } }
+    : { type: 'image', source: { type: 'base64', media_type: mimeType, data: bytesToBase64(bytes) } };
+
+  const parsed = await callClaude({
+    model: 'claude-haiku-4-5-20251001',
+    max_tokens: 1024,
+    messages: [{ role: 'user', content: [contentBlock, { type: 'text', text: prompt }] }],
+  });
+
+  return parsed && typeof parsed === 'object'
+    ? normalizeReceipt(parsed as Record<string, unknown>, fallbackDate)
+    : null;
+}
+
+async function classifyEmailBody(
+  meta: MsgMeta,
+  emailBody: string,
+  urls: string[],
+  fallbackDate: string | null
+): Promise<{ status: string; receipt: ReceiptData | null; merchant_hint: string | null; reason: string | null } | null> {
+  const parsed = await callClaude({
+    model: 'claude-haiku-4-5-20251001',
+    max_tokens: 768,
+    messages: [{
+      role: 'user',
+      content:
+        `Classify this email for a receipt import app. Return ONLY valid JSON.\n\n` +
+        `If the email text contains enough receipt data, return:\n` +
+        `{"status":"receipt","merchant_name":"string","date":"YYYY-MM-DD","total_amount":number,"currency":"3-letter code","category":"one of: Food & Drink, Transport, Tools & Materials, Office, Clothing, Health, Entertainment, Accommodation, Utilities, Other","line_items":[{"description":"string","amount":number}]}\n\n` +
+        `If the email appears to contain a receipt behind a link but does NOT include enough text to create a receipt, return:\n` +
+        `{"status":"link_needs_attention","merchant_hint":"string or null","reason":"short string"}\n\n` +
+        `If it is not a receipt/purchase/payment record, return {"status":"not_receipt"}.\n\n` +
+        `Only use link_needs_attention when a user should open a link in the email to download a receipt.\n\n` +
+        `From: ${meta.from}\nSubject: ${meta.subject}\nLinks found: ${urls.length}\nBody:\n${emailBody.slice(0, 4500)}`,
+    }],
+  });
+
+  if (!parsed || typeof parsed !== 'object') return null;
+  const raw = parsed as Record<string, unknown>;
+  const status = String(raw.status ?? '');
+  const receipt = status === 'receipt' ? normalizeReceipt(raw, fallbackDate) : null;
+  return {
+    status,
+    receipt,
+    merchant_hint: raw.merchant_hint ? String(raw.merchant_hint) : null,
+    reason: raw.reason ? String(raw.reason) : null,
+  };
+}
+
+async function insertReceiptForEmail(
+  supabase: any,
+  userId: string,
+  meta: MsgMeta,
+  msgData: any,
+  receipt: ReceiptData,
+  attachmentType: 'none' | 'pdf' | 'image' | 'link_only',
+  storagePath: string | null
+): Promise<string | null> {
+  const rfc822MessageId = headerValue(msgData.payload, 'Message-ID').replace(/[<>]/g, '').trim();
+  const receivedAt = toIsoTimestamp(msgData.internalDate ?? meta.internalDate);
+  const baseInsert = {
+    user_id: userId,
+    source: 'email_agent',
+    merchant_name: receipt.merchant_name,
+    date: receipt.date,
+    total_amount: receipt.total_amount,
+    currency: receipt.currency,
+    category: receipt.category,
+    is_business: false,
+    line_items: receipt.line_items,
+    image_url: attachmentType === 'image' ? storagePath : null,
+    pdf_url: attachmentType === 'pdf' ? storagePath : null,
+    email_source: meta.from || null,
+    email_subject: meta.subject || null,
+    email_received_at: receivedAt,
+    email_message_id: meta.id,
+    email_rfc822_message_id: rfc822MessageId || null,
+    attachment_type: attachmentType,
+    raw_text: null,
+  };
+
+  const { email_subject: _es, email_received_at: _er, email_rfc822_message_id: _ri, ...withoutOptional } = baseInsert;
+  const { email_message_id: _mi, ...withoutMessageId } = withoutOptional;
+  const columnPattern = /\bemail_(?:subject|received_at|rfc822_message_id|message_id)\b/;
+  let insertErr: any = null;
+  let insertedId: string | null = null;
+
+  for (const payload of [baseInsert, withoutOptional, withoutMessageId]) {
+    const { data, error } = await supabase
+      .from('receipts')
+      .insert(payload as any)
+      .select('id')
+      .single();
+    insertErr = error;
+    insertedId = (data as any)?.id ?? null;
+    if (!error || error.code === '23505') break;
+    if (!columnPattern.test(String(error.message ?? ''))) break;
+  }
+
+  if (insertErr?.code === '23505') {
+    insertedId = await findReceiptIdForEmail(supabase, userId, meta.id);
+  }
+
+  return insertedId;
+}
+
+async function upsertPendingEmailReceipt(
+  supabase: any,
+  userId: string,
+  meta: MsgMeta,
+  msgData: any,
+  merchantHint: string | null,
+  reason: string | null
+): Promise<string | null> {
+  const rfc822MessageId = headerValue(msgData.payload, 'Message-ID').replace(/[<>]/g, '').trim();
+  const receivedAt = toIsoTimestamp(msgData.internalDate ?? meta.internalDate);
+  const { data, error } = await supabase
+    .from('pending_email_receipts')
+    .upsert({
+      user_id: userId,
+      email_message_id: meta.id,
+      email_rfc822_message_id: rfc822MessageId || null,
+      email_subject: meta.subject || null,
+      email_source: meta.from || null,
+      email_received_at: receivedAt,
+      gmail_search: gmailSearchHint(meta.from, String(msgData.internalDate ?? meta.internalDate), meta.subject),
+      merchant_hint: merchantHint,
+      reason: reason ?? 'Receipt is behind a link and the email text does not include enough details.',
+      status: 'unresolved',
+      resolved_at: null,
+    } as any, { onConflict: 'user_id,email_message_id' })
+    .select('id')
+    .single();
+  return error ? null : (data as any)?.id ?? null;
+}
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
@@ -131,7 +462,9 @@ serve(async (req) => {
   }
 
   let reqBody: Record<string, unknown>;
-  try { reqBody = await req.json(); } catch {
+  try {
+    reqBody = await req.json();
+  } catch {
     return new Response(JSON.stringify({ error: 'Invalid JSON body' }), {
       status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
@@ -145,13 +478,11 @@ serve(async (req) => {
     });
   }
 
-  // ── Phase 1: Collect all matching Gmail message IDs (newest first) ────────
-  // Search only Inbox + Updates — that's where receipts actually land.
-  // Promotions/Social are excluded.
+  const subjectTerms = RECEIPT_SUBJECT_KEYWORDS.map(quoteSearchTerm).join(' OR ');
+  const fromTerms = RECEIPT_FROM_PATTERNS.map(quoteSearchTerm).join(' OR ');
   const q = encodeURIComponent(
     `newer_than:${lookback_days}d (label:inbox OR label:updates) ` +
-    `(subject:(receipt OR invoice OR "order confirmation" OR "tax invoice" OR "payment confirmation" OR "your order" OR "order details" OR booking OR reservation OR delivered OR shipment) OR ` +
-    `from:(receipt OR invoice OR orders OR billing OR payment OR noreply OR no-reply OR donotreply OR do-not-reply OR notifications OR confirm OR booking))`
+    `(subject:(${subjectTerms}) OR from:(${fromTerms}))`
   );
 
   const allIds: string[] = [];
@@ -175,12 +506,20 @@ serve(async (req) => {
   }
 
   if (allIds.length === 0) {
-    return new Response(JSON.stringify({ imported: 0, link_only: [], already_scanned: 0, remaining: 0 }), {
+    return new Response(JSON.stringify({
+      imported: 0,
+      imported_receipt_ids: [],
+      link_only_receipt_ids: [],
+      pending_email_receipt_ids: [],
+      processed: 0,
+      skipped: 0,
+      already_scanned: 0,
+      remaining: 0,
+    }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   }
 
-  // ── Phase 2: Batch dedup against scan history ─────────────────────────────
   const { data: scanned } = await supabase
     .from('email_scan_history')
     .select('email_message_id')
@@ -189,23 +528,25 @@ serve(async (req) => {
 
   const scannedIds = new Set((scanned ?? []).map((r: any) => r.email_message_id));
   const already_scanned = scannedIds.size;
-
-  // Gmail returns newest first — reverse so we process oldest unseen first
   const unseenIds = allIds.filter((id) => !scannedIds.has(id)).reverse();
 
   if (unseenIds.length === 0) {
-    return new Response(
-      JSON.stringify({ imported: 0, link_only: [], already_scanned, remaining: 0 }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return new Response(JSON.stringify({
+      imported: 0,
+      imported_receipt_ids: [],
+      link_only_receipt_ids: [],
+      pending_email_receipt_ids: [],
+      processed: 0,
+      skipped: 0,
+      already_scanned,
+      remaining: 0,
+    }), {
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
   }
 
-  // Take the oldest SCAN_CAP emails to process this run
   const toProcess = unseenIds.slice(0, SCAN_CAP);
   const remaining = Math.max(0, unseenIds.length - SCAN_CAP);
-
-  // ── Phase 3: Fetch metadata (headers only) in parallel ────────────────────
-  type MsgMeta = { id: string; subject: string; from: string; internalDate: string };
 
   const metaResults = await runBatches<string, MsgMeta | null>(
     toProcess,
@@ -225,20 +566,15 @@ serve(async (req) => {
           from: headerValue(data.payload, 'From'),
           internalDate: String(data.internalDate ?? ''),
         };
-      } catch { return null; }
+      } catch {
+        return null;
+      }
     }
   );
 
-  // Keep only emails whose headers look like receipts — skip the rest silently
   const candidates = metaResults.filter(
     (m): m is MsgMeta => m !== null && looksLikeReceipt(m.subject, m.from)
   );
-
-  // ── Phase 4: Full fetch + Claude in parallel batches of 8 ─────────────────
-  type ProcessResult =
-    | { kind: 'imported' }
-    | { kind: 'link_only'; subject: string; from_address: string; received_at: string | null; gmail_search: string; message_id: string }
-    | { kind: 'skip' };
 
   const processResults = await runBatches<MsgMeta, ProcessResult>(
     candidates,
@@ -249,144 +585,124 @@ serve(async (req) => {
           `https://gmail.googleapis.com/gmail/v1/users/me/messages/${meta.id}?format=full`,
           { headers: { Authorization: `Bearer ${access_token}` } }
         );
-        if (!msgResp.ok) return { kind: 'skip' };
+        if (!msgResp.ok) return { kind: 'retry', message_id: meta.id };
+
         const msgData = await msgResp.json();
+        const receivedAt = toIsoTimestamp(msgData.internalDate ?? meta.internalDate);
+        const attachments = collectAttachmentCandidates(msgData.payload);
+
+        for (const attachment of attachments) {
+          const bytes = await downloadAttachmentBytes(access_token, meta.id, attachment);
+          if (!bytes || bytes.length === 0) continue;
+
+          const receipt = await parseReceiptAttachment(bytes, attachment.mimeType, receivedAt);
+          if (!receipt) continue;
+
+          const storagePath = await uploadAttachment(supabase, user.id, meta.id, attachment, bytes);
+          if (!storagePath) continue;
+
+          const attachmentType = attachment.mimeType === 'application/pdf' ? 'pdf' : 'image';
+          const receiptId = await insertReceiptForEmail(
+            supabase,
+            user.id,
+            meta,
+            msgData,
+            receipt,
+            attachmentType,
+            storagePath
+          );
+          if (receiptId) return { kind: 'imported', receipt_id: receiptId, message_id: meta.id };
+        }
 
         const emailBody = extractBody(msgData.payload);
-        if (!emailBody || emailBody.length < 20) return { kind: 'skip' };
-
-        const rfc822MessageId = headerValue(msgData.payload, 'Message-ID').replace(/[<>]/g, '').trim();
         const urls = extractUrls(emailBody);
-        const receivedAt = toIsoTimestamp(msgData.internalDate ?? meta.internalDate);
+        if (!emailBody || emailBody.length < 20) {
+          return urls.length > 0
+            ? { kind: 'retry', message_id: meta.id }
+            : { kind: 'skip', message_id: meta.id };
+        }
 
-        const claudeResp = await fetch('https://api.anthropic.com/v1/messages', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': ANTHROPIC_API_KEY,
-            'anthropic-version': '2023-06-01',
-          },
-          body: JSON.stringify({
-            model: 'claude-haiku-4-5-20251001',
-            max_tokens: 512,
-            messages: [{
-              role: 'user',
-              content:
-                `Extract receipt/purchase data from this email. Includes purchase receipts, delivery confirmations with a total paid, booking/hotel confirmations with a total charged, subscription payments, and any email recording money spent. Return ONLY valid JSON or the word null if no money was actually charged.\n\n` +
-                `JSON format:\n{"merchant_name":"string","date":"YYYY-MM-DD","total_amount":number,"currency":"3-letter code","category":"one of: Food & Drink, Transport, Tools & Materials, Office, Clothing, Health, Entertainment, Accommodation, Utilities, Other","line_items":[{"description":"string","amount":number}]}\n\n` +
-                `From: ${meta.from}\nSubject: ${meta.subject}\nBody:\n${emailBody.slice(0, 4000)}`,
-            }],
-          }),
-        });
+        const classification = await classifyEmailBody(meta, emailBody, urls, receivedAt);
 
-        if (!claudeResp.ok) return urls.length > 0 ? { kind: 'link_only', message_id: meta.id, subject: meta.subject, from_address: meta.from, received_at: receivedAt, gmail_search: gmailSearchHint(meta.from, meta.internalDate) } : { kind: 'skip' };
-        const claudeData = await claudeResp.json();
-        const rawText = (claudeData.content?.[0]?.text ?? '').trim();
-        const cleaned = rawText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
-
-        // Strategy 1: Claude extracted a valid receipt — insert it
-        if (cleaned && cleaned !== 'null' && cleaned.startsWith('{')) {
-          let receipt: Record<string, unknown> | undefined;
-          try { receipt = JSON.parse(cleaned); } catch { /* fall through to strategy 2 check */ }
-
-          if (receipt && receipt.merchant_name && receipt.total_amount) {
-            const baseInsert = {
-              user_id: user.id,
-              source: 'email_agent',
-              merchant_name: String(receipt.merchant_name),
-              date: receipt.date ?? new Date().toISOString().slice(0, 10),
-              total_amount: Number(receipt.total_amount) || 0,
-              currency: String(receipt.currency ?? 'AUD'),
-              category: receipt.category ?? null,
-              is_business: false,
-              line_items: Array.isArray(receipt.line_items) ? receipt.line_items : [],
-              email_source: meta.from || null,
-              email_subject: meta.subject || null,
-              email_received_at: receivedAt,
-              email_message_id: meta.id,
-              email_rfc822_message_id: rfc822MessageId || null,
-              attachment_type: 'none',
-              raw_text: null,
-            };
-
-            // Fallback inserts if schema is behind on optional columns
-            const { email_subject: _es, email_received_at: _er, email_rfc822_message_id: _ri, ...withoutOptional } = baseInsert;
-            const { email_message_id: _mi, ...withoutMessageId } = withoutOptional;
-            const columnPattern = /\bemail_(?:subject|received_at|rfc822_message_id|message_id)\b/;
-            let insertErr: any = null;
-            for (const payload of [baseInsert, withoutOptional, withoutMessageId]) {
-              const { error } = await supabase.from('receipts').insert(payload);
-              insertErr = error;
-              if (!error || error.code === '23505') break;
-              if (!columnPattern.test(String(error.message ?? ''))) break;
-            }
-
-            if (!insertErr || insertErr.code === '23505') return { kind: 'imported' };
+        if (classification?.status === 'receipt' && classification.receipt) {
+          const attachmentType = urls.length > 0 ? 'link_only' : 'none';
+          const receiptId = await insertReceiptForEmail(
+            supabase,
+            user.id,
+            meta,
+            msgData,
+            classification.receipt,
+            attachmentType,
+            null
+          );
+          if (receiptId) {
+            return attachmentType === 'link_only'
+              ? { kind: 'link_only', receipt_id: receiptId, message_id: meta.id }
+              : { kind: 'imported', receipt_id: receiptId, message_id: meta.id };
           }
         }
 
-        // Strategy 2: Claude couldn't extract enough info but the email has
-        // URLs — likely a receipt link the user needs to download manually.
-        if (urls.length > 0) {
-          return {
-            kind: 'link_only',
-            message_id: meta.id,
-            subject: meta.subject,
-            from_address: meta.from,
-            received_at: receivedAt,
-            gmail_search: gmailSearchHint(meta.from, meta.internalDate),
-          };
+        if (classification?.status === 'link_needs_attention' || urls.length > 0) {
+          const pendingId = await upsertPendingEmailReceipt(
+            supabase,
+            user.id,
+            meta,
+            msgData,
+            classification?.merchant_hint ?? null,
+            classification?.reason ?? null
+          );
+          return pendingId
+            ? { kind: 'attention', pending_id: pendingId, message_id: meta.id }
+            : { kind: 'retry', message_id: meta.id };
         }
 
-        // Not a receipt — silently skip
-        return { kind: 'skip' };
-      } catch { return { kind: 'skip' }; }
-      finally {
-        // Mark as scanned immediately so a timeout mid-batch doesn't cause re-processing
-        await supabase.from('email_scan_history').upsert(
-          [{ user_id: user.id, email_message_id: meta.id }],
-          { onConflict: 'user_id,email_message_id', ignoreDuplicates: true }
-        ).then(() => {});
+        return { kind: 'skip', message_id: meta.id };
+      } catch {
+        return { kind: 'retry', message_id: meta.id };
       }
     }
   );
 
-  // ── Phase 5: Mark metadata-fetched emails as scanned ─────────────────────
-  // Write in two batches: (a) emails that didn't pass the header filter (cheap
-  // to mark now), (b) emails that were fully processed (already marked inline).
-  // This ensures scan history is written even if the function times out mid-run.
   const metaScanned = toProcess.filter(
-    (id) => !candidates.some((c) => c.id === id)
+    (id) => !candidates.some((candidate) => candidate.id === id)
   );
-  if (metaScanned.length > 0) {
+  const processedScanned = processResults
+    .filter((result) => result.kind !== 'retry')
+    .map((result) => result.message_id);
+  const scannedToWrite = Array.from(new Set([...metaScanned, ...processedScanned]));
+
+  if (scannedToWrite.length > 0) {
     await supabase.from('email_scan_history').upsert(
-      metaScanned.map((id) => ({ user_id: user.id, email_message_id: id })),
+      scannedToWrite.map((id) => ({ user_id: user.id, email_message_id: id })),
       { onConflict: 'user_id,email_message_id', ignoreDuplicates: true }
     );
   }
 
-  let imported = 0;
-  const link_only: Array<{
-    message_id: string;
-    subject: string;
-    from_address: string;
-    received_at: string | null;
-    gmail_search: string;
-  }> = [];
+  const imported_receipt_ids: string[] = [];
+  const link_only_receipt_ids: string[] = [];
+  const pending_email_receipt_ids: string[] = [];
+  let skipped = metaScanned.length;
 
-  for (const r of processResults) {
-    if (r.kind === 'imported') imported++;
-    else if (r.kind === 'link_only') link_only.push({
-      message_id: r.message_id,
-      subject: r.subject,
-      from_address: r.from_address,
-      received_at: r.received_at,
-      gmail_search: r.gmail_search,
-    });
+  for (const result of processResults) {
+    if (result.kind === 'imported') imported_receipt_ids.push(result.receipt_id);
+    else if (result.kind === 'link_only') link_only_receipt_ids.push(result.receipt_id);
+    else if (result.kind === 'attention') pending_email_receipt_ids.push(result.pending_id);
+    else if (result.kind === 'skip') skipped++;
   }
 
+  const imported = imported_receipt_ids.length + link_only_receipt_ids.length;
+
   return new Response(
-    JSON.stringify({ imported, link_only, already_scanned, remaining }),
+    JSON.stringify({
+      imported,
+      imported_receipt_ids,
+      link_only_receipt_ids,
+      pending_email_receipt_ids,
+      processed: toProcess.length,
+      skipped,
+      already_scanned,
+      remaining,
+    }),
     { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
   );
 });

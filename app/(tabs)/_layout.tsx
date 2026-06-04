@@ -89,7 +89,7 @@ function CustomTabBar({ state, descriptors, navigation }: any) {
               <View style={{ flex: 1, alignItems: 'center' }}>
                 <TouchableOpacity
                   style={styles.fab}
-                  onPress={() => router.push('/email-import')}
+                  onPress={() => router.push('/add-receipt')}
                   activeOpacity={0.85}
                 >
                   <Plus size={24} color="#fff" />

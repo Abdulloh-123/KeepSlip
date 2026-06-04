@@ -77,11 +77,19 @@ export default function RootLayout() {
           options={{ presentation: 'fullScreenModal', headerShown: false }}
         />
         <Stack.Screen
+          name="add-receipt"
+          options={{ presentation: 'transparentModal', headerShown: false }}
+        />
+        <Stack.Screen
           name="email-import"
           options={{ presentation: 'modal', headerShown: false }}
         />
         <Stack.Screen
           name="email-import-results"
+          options={{ presentation: 'card', headerShown: false }}
+        />
+        <Stack.Screen
+          name="email-attention"
           options={{ presentation: 'card', headerShown: false }}
         />
       </Stack>

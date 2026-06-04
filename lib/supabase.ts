@@ -1,13 +1,25 @@
 import 'react-native-url-polyfill/auto';
 import { createClient } from '@supabase/supabase-js';
 import * as SecureStore from 'expo-secure-store';
-import type { Receipt, ReceiptInsert } from '@/types/receipt';
+import type { PendingEmailReceipt, Receipt, ReceiptInsert } from '@/types/receipt';
 
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY!;
 
 // Chunked SecureStore adapter — iOS limit is 2048 bytes per key.
 // Supabase session JSON exceeds this, so we split across multiple keys.
+async function removeChunkedSecureStoreValue(key: string): Promise<void> {
+  const count = await SecureStore.getItemAsync(key + '_n');
+  if (count) {
+    await Promise.all([
+      SecureStore.deleteItemAsync(key + '_n'),
+      ...Array.from({ length: Number(count) }, (_, i) =>
+        SecureStore.deleteItemAsync(key + '_' + i)
+      ),
+    ]);
+  }
+}
+
 const SecureStoreAdapter = {
   getItem: async (key: string) => {
     const count = await SecureStore.getItemAsync(key + '_n');
@@ -20,26 +32,19 @@ const SecureStoreAdapter = {
     return chunks.join('');
   },
   setItem: async (key: string, value: string) => {
+    await removeChunkedSecureStoreValue(key);
     if (value.length <= 2000) {
-      await SecureStore.deleteItemAsync(key + '_n');
       await SecureStore.setItemAsync(key, value);
       return;
     }
     const chunks: string[] = [];
     for (let i = 0; i < value.length; i += 2000) chunks.push(value.slice(i, i + 2000));
+    await SecureStore.deleteItemAsync(key);
     await SecureStore.setItemAsync(key + '_n', String(chunks.length));
     await Promise.all(chunks.map((c, i) => SecureStore.setItemAsync(key + '_' + i, c)));
   },
   removeItem: async (key: string) => {
-    const count = await SecureStore.getItemAsync(key + '_n');
-    if (count) {
-      await Promise.all([
-        SecureStore.deleteItemAsync(key + '_n'),
-        ...Array.from({ length: Number(count) }, (_, i) =>
-          SecureStore.deleteItemAsync(key + '_' + i)
-        ),
-      ]);
-    }
+    await removeChunkedSecureStoreValue(key);
     await SecureStore.deleteItemAsync(key);
   },
 };
@@ -72,6 +77,59 @@ export async function fetchReceipt(id: string): Promise<Receipt> {
     .single();
   if (error) throw error;
   return data as Receipt;
+}
+
+export async function fetchReceiptsByIds(ids: string[]): Promise<Receipt[]> {
+  if (ids.length === 0) return [];
+  const { data, error } = await supabase
+    .from('receipts')
+    .select('*')
+    .in('id', ids);
+  if (error) throw error;
+
+  const byId = new Map((data as Receipt[]).map((receipt) => [receipt.id, receipt]));
+  return ids.map((id) => byId.get(id)).filter((receipt): receipt is Receipt => Boolean(receipt));
+}
+
+export async function fetchPendingEmailReceipts(): Promise<PendingEmailReceipt[]> {
+  const { data, error } = await supabase
+    .from('pending_email_receipts')
+    .select('*')
+    .eq('status', 'unresolved')
+    .order('email_received_at', { ascending: true, nullsFirst: false });
+  if (error) throw error;
+  return data as PendingEmailReceipt[];
+}
+
+export async function fetchPendingEmailReceiptsByIds(
+  ids: string[]
+): Promise<PendingEmailReceipt[]> {
+  if (ids.length === 0) return [];
+  const { data, error } = await supabase
+    .from('pending_email_receipts')
+    .select('*')
+    .in('id', ids);
+  if (error) throw error;
+
+  const byId = new Map((data as PendingEmailReceipt[]).map((item) => [item.id, item]));
+  return ids.map((id) => byId.get(id)).filter((item): item is PendingEmailReceipt => Boolean(item));
+}
+
+export async function countPendingEmailReceipts(): Promise<number> {
+  const { count, error } = await supabase
+    .from('pending_email_receipts')
+    .select('id', { count: 'exact', head: true })
+    .eq('status', 'unresolved');
+  if (error) throw error;
+  return count ?? 0;
+}
+
+export async function resolvePendingEmailReceipt(id: string): Promise<void> {
+  const { error } = await supabase
+    .from('pending_email_receipts')
+    .update({ status: 'resolved', resolved_at: new Date().toISOString() })
+    .eq('id', id);
+  if (error) throw error;
 }
 
 export async function insertReceipt(receipt: ReceiptInsert): Promise<Receipt> {

@@ -7,93 +7,105 @@ import {
   ScrollView,
   ActivityIndicator,
   Linking,
-  Share,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { ArrowLeft, Package, TriangleAlert, Mail, Copy, ExternalLink } from 'lucide-react-native';
-import { supabase } from '@/lib/supabase';
-import type { Receipt } from '@/types/receipt';
-import type { LinkOnlyReceipt } from '@/lib/gmail';
+import { ArrowLeft, Package, TriangleAlert, Mail, ExternalLink } from 'lucide-react-native';
+import { fetchPendingEmailReceiptsByIds, fetchReceiptsByIds } from '@/lib/supabase';
+import type { PendingEmailReceipt, Receipt } from '@/types/receipt';
 
 function formatDate(str: string) {
   return new Date(str).toLocaleDateString('en-AU', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-function senderName(from: string): string {
+function senderName(from: string | null): string {
+  if (!from) return 'Unknown sender';
   const nameMatch = from.match(/^([^<]+)</);
   if (nameMatch) return nameMatch[1].trim();
   return from.split('@')[0];
+}
+
+function parseReceiptIds(raw: string | string[] | undefined): string[] {
+  if (!raw || Array.isArray(raw)) return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function buildPendingGmailSearch(item: PendingEmailReceipt): string {
+  if (item.email_rfc822_message_id) return `rfc822msgid:${item.email_rfc822_message_id}`;
+  if (item.gmail_search) return item.gmail_search;
+  if (item.email_message_id) return item.email_message_id;
+  return `${item.merchant_hint ?? ''} ${item.email_subject ?? ''}`.trim();
 }
 
 export default function EmailImportResults() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const params = useLocalSearchParams<{
-    imported:        string;
+    imported: string;
+    processed: string;
+    skipped: string;
     already_scanned: string;
-    remaining:       string;
+    remaining: string;
+    imported_receipt_ids?: string;
+    link_only_receipt_ids?: string;
+    pending_email_receipt_ids?: string;
   }>();
 
-  const importedCount    = Number(params.imported        ?? 0);
-  const alreadyScanned   = Number(params.already_scanned ?? 0);
-  const remainingCount   = Number(params.remaining       ?? 0);
+  const importedCount = Number(params.imported ?? 0);
+  const processedCount = Number(params.processed ?? 0);
+  const skippedCount = Number(params.skipped ?? 0);
+  const alreadyScanned = Number(params.already_scanned ?? 0);
+  const remainingCount = Number(params.remaining ?? 0);
+  const importedReceiptIds = parseReceiptIds(params.imported_receipt_ids);
+  const linkOnlyReceiptIds = parseReceiptIds(params.link_only_receipt_ids);
+  const pendingEmailReceiptIds = parseReceiptIds(params.pending_email_receipt_ids);
+  const addedReceiptIds = Array.from(new Set([...importedReceiptIds, ...linkOnlyReceiptIds]));
 
-  const [receipts,  setReceipts]  = useState<Receipt[]>([]);
-  const [linkOnly,  setLinkOnly]  = useState<LinkOnlyReceipt[]>([]);
-  const [loading,   setLoading]   = useState(true);
+  const [receipts, setReceipts] = useState<Receipt[]>([]);
+  const [pendingEmails, setPendingEmails] = useState<PendingEmailReceipt[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    loadData();
-  }, []);
+    void loadData();
+  }, [params.imported_receipt_ids, params.link_only_receipt_ids, params.pending_email_receipt_ids]);
 
   async function loadData() {
-    await Promise.all([loadReceipts(), loadLinkOnly()]);
-    setLoading(false);
-  }
-
-  async function loadReceipts() {
+    setLoading(true);
     try {
-      const since = new Date(Date.now() - 10 * 60 * 1000).toISOString();
-      const { data, error } = await supabase
-        .from('receipts')
-        .select('*')
-        .eq('source', 'email_agent')
-        .gte('created_at', since)
-        .order('created_at', { ascending: false });
-      if (!error) setReceipts(data ?? []);
-    } catch {}
+      const [addedRows, pendingRows] = await Promise.all([
+        fetchReceiptsByIds(addedReceiptIds),
+        fetchPendingEmailReceiptsByIds(pendingEmailReceiptIds),
+      ]);
+      setReceipts(addedRows);
+      setPendingEmails(pendingRows);
+    } catch {
+      setReceipts([]);
+      setPendingEmails([]);
+    } finally {
+      setLoading(false);
+    }
   }
 
-  async function loadLinkOnly() {
-    try {
-      const raw = await AsyncStorage.getItem('email_import_link_only');
-      if (raw) setLinkOnly(JSON.parse(raw) as LinkOnlyReceipt[]);
-    } catch {}
-  }
-
-  async function copySearch(item: LinkOnlyReceipt) {
-    try {
-      await Share.share({ message: item.gmail_search });
-    } catch {}
-  }
-
-  function openGmail(item: LinkOnlyReceipt) {
+  function openPendingGmail(item: PendingEmailReceipt) {
+    const hint = buildPendingGmailSearch(item);
     Linking.openURL(
-      `https://mail.google.com/mail/u/0/#search/${encodeURIComponent(item.gmail_search)}`
-    );
+      `https://mail.google.com/mail/u/0/#search/${encodeURIComponent(hint)}`
+    ).catch(() => null);
   }
 
   function handleDone() {
     router.replace('/(tabs)');
   }
 
-  const hasStats = alreadyScanned > 0 || remainingCount > 0;
+  const hasStats = processedCount > 0 || skippedCount > 0 || alreadyScanned > 0 || remainingCount > 0;
 
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
-      {/* App bar */}
       <View style={styles.appBar}>
         <TouchableOpacity style={styles.backBtn} onPress={handleDone} activeOpacity={0.7}>
           <ArrowLeft size={22} color="#111827" />
@@ -105,8 +117,6 @@ export default function EmailImportResults() {
       </View>
 
       <ScrollView style={styles.scroll} showsVerticalScrollIndicator={false}>
-
-        {/* ── ADDED section ──────────────────────────────────────────────── */}
         <View style={styles.sectionRow}>
           <Text style={styles.sectionLabel}>ADDED</Text>
           <View style={styles.greenBadge}>
@@ -118,93 +128,87 @@ export default function EmailImportResults() {
           {loading ? (
             <ActivityIndicator size="small" color="#0D9488" style={styles.loader} />
           ) : receipts.length > 0 ? (
-            receipts.map((r) => (
+            receipts.map((receipt) => (
               <TouchableOpacity
-                key={r.id}
+                key={receipt.id}
                 style={styles.card}
-                onPress={() => router.push(`/receipt/${r.id}`)}
+                onPress={() => router.push(`/receipt/${receipt.id}`)}
                 activeOpacity={0.7}
               >
                 <View style={styles.cardAvatar}>
                   <Package size={18} color="#0D9488" />
                 </View>
                 <View style={styles.cardInfo}>
-                  <Text style={styles.cardName}>{r.merchant_name}</Text>
-                  <Text style={styles.cardSub}>{formatDate(r.date)} · Email import</Text>
+                  <Text style={styles.cardName}>{receipt.merchant_name}</Text>
+                  <Text style={styles.cardSub}>{formatDate(receipt.date)} · Email import</Text>
                 </View>
-                <Text style={styles.cardAmount}>${r.total_amount.toFixed(2)}</Text>
+                <Text style={styles.cardAmount}>${receipt.total_amount.toFixed(2)}</Text>
               </TouchableOpacity>
             ))
           ) : (
             <Text style={styles.emptyNote}>
               {importedCount > 0
-                ? 'Receipts saved — pull to refresh on the home screen.'
+                ? 'Receipts saved. Open one to review the imported details.'
                 : 'No new receipts found in this period.'}
             </Text>
           )}
         </View>
 
-        {/* ── NEEDS YOUR ATTENTION section ──────────────────────────────── */}
-        {linkOnly.length > 0 && (
+        {pendingEmails.length > 0 && (
           <View style={styles.nhSection}>
             <View style={styles.nhHeader}>
               <TriangleAlert size={15} color="#D97706" />
               <Text style={styles.nhLabel}>NEEDS YOUR ATTENTION</Text>
               <View style={styles.amberBadge}>
-                <Text style={styles.amberBadgeText}>{linkOnly.length}</Text>
+                <Text style={styles.amberBadgeText}>{pendingEmails.length}</Text>
               </View>
             </View>
 
             <Text style={styles.nhNote}>
-              These emails look like receipts but didn't have enough detail to import automatically.
-              Find each one in Gmail and upload the attachment.
+              These emails look like receipts, but the receipt is behind a link and the
+              message text did not include enough details. Find the email, download the
+              receipt manually, then mark it done from Settings.
             </Text>
 
-            {linkOnly.map((item) => (
-              <View key={item.message_id} style={styles.linkCard}>
-                {/* Card header */}
+            {pendingEmails.map((item) => (
+              <View key={item.id} style={styles.linkCard}>
                 <View style={styles.linkCardHeader}>
                   <View style={styles.mailIconWrap}>
                     <Mail size={16} color="#D97706" />
                   </View>
                   <View style={styles.linkCardMeta}>
                     <Text style={styles.linkCardSubject} numberOfLines={1}>
-                      {item.subject || '(no subject)'}
+                      {item.merchant_hint || item.email_subject || 'Receipt email'}
                     </Text>
                     <Text style={styles.linkCardFrom} numberOfLines={1}>
-                      {senderName(item.from_address)}
-                      {item.received_at ? ` · ${formatDate(item.received_at)}` : ''}
+                      {senderName(item.email_source)}
+                      {item.email_received_at ? ` · ${formatDate(item.email_received_at)}` : ''}
                     </Text>
                   </View>
                 </View>
 
-                {/* Gmail search hint */}
                 <View style={styles.searchHintBlock}>
-                  <Text style={styles.searchHintLabel}>Gmail search</Text>
-                  <Text style={styles.searchHintText} numberOfLines={2} selectable>
-                    {item.gmail_search}
+                  <Text style={styles.searchHintLabel}>Find it in Gmail</Text>
+                  <Text style={styles.searchHintText} numberOfLines={2}>
+                    {buildPendingGmailSearch(item) || item.email_subject || 'Open Gmail and search for this receipt email.'}
                   </Text>
                 </View>
 
-                {/* Actions */}
                 <View style={styles.linkCardActions}>
                   <TouchableOpacity
-                    style={styles.copyBtn}
-                    onPress={() => copySearch(item)}
+                    style={styles.openBtn}
+                    onPress={() => router.push('/(tabs)')}
                     activeOpacity={0.8}
                   >
-                    <Copy size={13} color="#92400E" />
-                    <Text style={styles.copyBtnText}>
-                      Copy search
-                    </Text>
+                    <Text style={styles.openBtnText}>Open list</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
-                    style={styles.openBtn}
-                    onPress={() => openGmail(item)}
+                    style={styles.secondaryBtn}
+                    onPress={() => openPendingGmail(item)}
                     activeOpacity={0.8}
                   >
-                    <ExternalLink size={13} color="#fff" />
-                    <Text style={styles.openBtnText}>Open in Gmail</Text>
+                    <ExternalLink size={13} color="#92400E" />
+                    <Text style={styles.secondaryBtnText}>Open Gmail</Text>
                   </TouchableOpacity>
                 </View>
               </View>
@@ -212,15 +216,30 @@ export default function EmailImportResults() {
           </View>
         )}
 
-        {/* ── Stats row ─────────────────────────────────────────────────── */}
         {hasStats && (
           <View style={styles.statsRow}>
+            {processedCount > 0 && (
+              <Text style={styles.statChip}>
+                {processedCount} processed
+              </Text>
+            )}
+            {processedCount > 0 && skippedCount > 0 && (
+              <Text style={styles.statDot}>·</Text>
+            )}
+            {skippedCount > 0 && (
+              <Text style={styles.statChip}>
+                {skippedCount} skipped
+              </Text>
+            )}
+            {(processedCount > 0 || skippedCount > 0) && alreadyScanned > 0 && (
+              <Text style={styles.statDot}>·</Text>
+            )}
             {alreadyScanned > 0 && (
               <Text style={styles.statChip}>
                 {alreadyScanned} already scanned
               </Text>
             )}
-            {alreadyScanned > 0 && remainingCount > 0 && (
+            {(processedCount > 0 || skippedCount > 0 || alreadyScanned > 0) && remainingCount > 0 && (
               <Text style={styles.statDot}>·</Text>
             )}
             {remainingCount > 0 && (
@@ -276,8 +295,6 @@ const styles = StyleSheet.create({
   scroll: {
     flex: 1,
   },
-
-  // ── Section headers
   sectionRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -304,8 +321,6 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: '#0D9488',
   },
-
-  // ── Added cards
   cardsWrap: {
     backgroundColor: '#fff',
     paddingTop: 4,
@@ -362,8 +377,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     paddingVertical: 24,
   },
-
-  // ── Needs Your Attention
   nhSection: {
     backgroundColor: '#F8FAFC',
     paddingTop: 8,
@@ -400,8 +413,6 @@ const styles = StyleSheet.create({
     color: '#6B7280',
     lineHeight: 18,
   },
-
-  // ── Link-only card
   linkCard: {
     backgroundColor: '#fff',
     borderRadius: 12,
@@ -468,21 +479,6 @@ const styles = StyleSheet.create({
     padding: 14,
     paddingTop: 10,
   },
-  copyBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#FEF3C7',
-    borderRadius: 8,
-    paddingVertical: 9,
-    gap: 5,
-  },
-  copyBtnText: {
-    fontFamily: 'DMSans-SemiBold',
-    fontSize: 12,
-    color: '#92400E',
-  },
   openBtn: {
     flex: 1,
     flexDirection: 'row',
@@ -498,8 +494,21 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#fff',
   },
-
-  // ── Stats row
+  secondaryBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FEF3C7',
+    borderRadius: 8,
+    paddingVertical: 9,
+    gap: 5,
+  },
+  secondaryBtnText: {
+    fontFamily: 'DMSans-SemiBold',
+    fontSize: 12,
+    color: '#92400E',
+  },
   statsRow: {
     flexDirection: 'row',
     alignItems: 'center',

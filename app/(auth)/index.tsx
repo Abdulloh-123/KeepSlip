@@ -51,8 +51,7 @@ export default function WelcomeScreen() {
           </View>
           <Text style={styles.headline}>All your receipts,{'\n'}one place.</Text>
           <Text style={styles.sub}>
-            Scan paper receipts, import from Gmail, search everything — no
-            shoebox required.
+            Scan paper receipts, upload files and photos, search everything.
           </Text>
         </View>
 

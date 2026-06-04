@@ -17,7 +17,7 @@ export default function WelcomeScreen() {
         <Text style={styles.appName}>KeepSlip</Text>
       </View>
 
-      {/* Page dots — dot 1 active (Welcome), dot 2 inactive (Gmail) */}
+      {/* Page dots — dot 1 active (Welcome), dot 2 inactive (Permissions) */}
       <View style={styles.dotsRow}>
         <View style={[styles.dot, styles.dotActive]} />
         <View style={styles.dot} />
@@ -45,7 +45,7 @@ export default function WelcomeScreen() {
       <View style={[styles.bottom, { paddingBottom: insets.bottom + 40 }]}>
         <TouchableOpacity
           style={styles.primaryBtn}
-          onPress={() => router.replace('/(onboarding)/gmail-connect')}
+          onPress={() => router.replace('/(onboarding)/permissions')}
           activeOpacity={0.85}
         >
           <ArrowRight size={18} color="#fff" />

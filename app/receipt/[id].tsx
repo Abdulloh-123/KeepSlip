@@ -225,7 +225,8 @@ export default function ReceiptDetailScreen() {
     );
   }
 
-  const subtotal = receipt.line_items.reduce((s, li) => s + li.amount, 0);
+  const lineItems = Array.isArray(receipt.line_items) ? receipt.line_items : [];
+  const subtotal = lineItems.reduce((sum, item) => sum + item.amount, 0);
 
   const ImageViewerModal = (
     <Modal visible={!!imageViewer} transparent animationType="fade" onRequestClose={() => setImageViewer(null)}>
@@ -257,7 +258,9 @@ export default function ReceiptDetailScreen() {
             </TouchableOpacity>
           </View>
           <Text style={styles.instructionsBody}>
-            This receipt was imported from email text. The actual receipt file is behind a link — you need to download it manually from Gmail, then upload it here.
+            This receipt was created from the details written in the email. To get the official
+            receipt file, open that email in Gmail, open the receipt link, and download the file
+            manually before uploading it here.
           </Text>
           <View style={styles.instructionsInfo}>
             <Text style={styles.instructionsLabel}>Search query</Text>
@@ -305,7 +308,7 @@ export default function ReceiptDetailScreen() {
     </Modal>
   );
   const tax = receipt.total_amount - subtotal;
-  const hasLineItems = receipt.line_items.length > 0;
+  const hasLineItems = lineItems.length > 0;
 
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
@@ -348,11 +351,11 @@ export default function ReceiptDetailScreen() {
           <>
             <View style={styles.sectionHeader}>
               <Text style={styles.sectionLabel}>LINE ITEMS</Text>
-              <Text style={styles.sectionCount}>{receipt.line_items.length} items</Text>
+              <Text style={styles.sectionCount}>{lineItems.length} items</Text>
             </View>
             <View style={styles.itemsCard}>
-              {receipt.line_items.map((item, i) => (
-                <View key={i} style={[styles.lineRow, i < receipt.line_items.length - 1 && styles.lineRowBorder]}>
+              {lineItems.map((item, i) => (
+                <View key={i} style={[styles.lineRow, i < lineItems.length - 1 && styles.lineRowBorder]}>
                   <View style={styles.lineInfo}>
                     <Text style={styles.lineDesc}>{item.description}</Text>
                   </View>
@@ -396,7 +399,7 @@ export default function ReceiptDetailScreen() {
               activeOpacity={0.7}
             >
               <View style={styles.lineInfo}>
-                <Text style={styles.actionLabel}>View original receipt</Text>
+                <Text style={styles.actionLabel}>See actual receipt</Text>
               </View>
               <ExternalLink size={16} color="#0D9488" />
             </TouchableOpacity>

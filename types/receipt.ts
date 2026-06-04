@@ -34,6 +34,22 @@ export interface Receipt {
   created_at: string;
 }
 
+export interface PendingEmailReceipt {
+  id: string;
+  user_id: string;
+  email_message_id: string;
+  email_rfc822_message_id: string | null;
+  email_subject: string | null;
+  email_source: string | null;
+  email_received_at: string | null;
+  gmail_search: string | null;
+  merchant_hint: string | null;
+  reason: string | null;
+  status: 'unresolved' | 'resolved';
+  resolved_at: string | null;
+  created_at: string;
+}
+
 export type ReceiptInsert = Omit<
   Receipt,
   'id' | 'user_id' | 'created_at' | 'email_message_id' | 'email_rfc822_message_id' | 'email_subject' | 'email_received_at'

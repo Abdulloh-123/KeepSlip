@@ -93,7 +93,7 @@ export default function ReceiptListScreen() {
         <View style={styles.centered}>
           <Text style={styles.emptyTitle}>No receipts yet</Text>
           <Text style={styles.emptyBody}>
-            Tap + to scan a paper receipt or import from Gmail
+            Tap + to scan a receipt or upload a receipt file.
           </Text>
         </View>
       ) : (
