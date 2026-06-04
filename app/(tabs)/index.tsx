@@ -6,13 +6,13 @@ import {
   TouchableOpacity,
   ScrollView,
   RefreshControl,
-  ActivityIndicator,
 } from 'react-native';
 import { FlashList } from '@shopify/flash-list';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useReceipts } from '@/hooks/useReceipts';
 import { ReceiptCard } from '@/components/ReceiptCard';
+import { ERROR_COPY } from '@/lib/errors';
 import { CATEGORIES } from '@/types/receipt';
 import type { Receipt } from '@/types/receipt';
 
@@ -20,6 +20,23 @@ const CATEGORY_FILTERS = ['All', ...CATEGORIES] as const;
 
 function formatMonthYear(date: Date) {
   return date.toLocaleDateString('en-AU', { month: 'long', year: 'numeric' });
+}
+
+function ReceiptListSkeleton() {
+  return (
+    <View style={styles.skeletonList}>
+      {[0, 1, 2].map((item) => (
+        <View key={item} style={styles.skeletonCard}>
+          <View style={styles.skeletonAvatar} />
+          <View style={styles.skeletonInfo}>
+            <View style={styles.skeletonLineLong} />
+            <View style={styles.skeletonLineShort} />
+          </View>
+          <View style={styles.skeletonAmount} />
+        </View>
+      ))}
+    </View>
+  );
 }
 
 export default function ReceiptListScreen() {
@@ -52,9 +69,11 @@ export default function ReceiptListScreen() {
         </View>
         <View style={styles.amtBlock}>
           <Text style={styles.amtLabel}>THIS MONTH</Text>
-          <Text style={styles.amtValue}>${thisMonthSpend.toFixed(0)}</Text>
+          <Text style={styles.amtValue}>{loading && !refreshing ? '$--' : `$${thisMonthSpend.toFixed(0)}`}</Text>
           <Text style={styles.amtSub}>
-            {thisMonthCount} receipt{thisMonthCount !== 1 ? 's' : ''} · {formatMonthYear(new Date())}
+            {loading && !refreshing
+              ? `-- receipts · ${formatMonthYear(new Date())}`
+              : `${thisMonthCount} receipt${thisMonthCount !== 1 ? 's' : ''} · ${formatMonthYear(new Date())}`}
           </Text>
         </View>
       </View>
@@ -79,12 +98,10 @@ export default function ReceiptListScreen() {
 
       {/* Receipt list */}
       {loading && !refreshing ? (
-        <View style={styles.centered}>
-          <ActivityIndicator size="large" color="#0D9488" />
-        </View>
+        <ReceiptListSkeleton />
       ) : error ? (
         <View style={styles.centered}>
-          <Text style={styles.errorText}>Failed to load receipts</Text>
+          <Text style={styles.errorText}>{ERROR_COPY.loadReceipts}</Text>
           <TouchableOpacity onPress={refresh}>
             <Text style={styles.retryText}>Tap to retry</Text>
           </TouchableOpacity>
@@ -239,5 +256,51 @@ const styles = StyleSheet.create({
     fontFamily: 'DMSans-Medium',
     fontSize: 15,
     color: '#0D9488',
+  },
+  skeletonList: {
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 100,
+  },
+  skeletonCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    height: 72,
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#F1F5F9',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    marginBottom: 8,
+    gap: 12,
+  },
+  skeletonAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#E5E7EB',
+  },
+  skeletonInfo: {
+    flex: 1,
+    gap: 8,
+  },
+  skeletonLineLong: {
+    width: '64%',
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: '#E5E7EB',
+  },
+  skeletonLineShort: {
+    width: '44%',
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#F1F5F9',
+  },
+  skeletonAmount: {
+    width: 56,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: '#E5E7EB',
   },
 });

@@ -2,9 +2,10 @@ import { useState, useEffect, useRef } from 'react';
 import { searchReceipts } from '@/lib/supabase';
 import type { Receipt } from '@/types/receipt';
 
-export function useSearch(query: string) {
+export function useSearch(query: string, retryKey = 0) {
   const [results, setResults] = useState<Receipt[]>([]);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -13,16 +14,19 @@ export function useSearch(query: string) {
     if (!query.trim()) {
       setResults([]);
       setLoading(false);
+      setError(null);
       return;
     }
 
     setLoading(true);
+    setError(null);
     debounceRef.current = setTimeout(async () => {
       try {
         const data = await searchReceipts(query);
         setResults(data);
-      } catch {
+      } catch (e) {
         setResults([]);
+        setError(e as Error);
       } finally {
         setLoading(false);
       }
@@ -31,7 +35,7 @@ export function useSearch(query: string) {
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [query]);
+  }, [query, retryKey]);
 
-  return { results, loading };
+  return { results, loading, error };
 }

@@ -14,6 +14,7 @@ import { useRouter } from 'expo-router';
 import { Search as SearchIcon, X } from 'lucide-react-native';
 import { useSearch } from '@/hooks/useSearch';
 import { ReceiptCard } from '@/components/ReceiptCard';
+import { ERROR_COPY } from '@/lib/errors';
 import type { Receipt } from '@/types/receipt';
 
 const FILTER_PILLS = ['All', 'This Month', 'Groceries', '< $100'] as const;
@@ -24,7 +25,8 @@ export default function SearchScreen() {
   const router = useRouter();
   const [query, setQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState<FilterPill>('All');
-  const { results, loading } = useSearch(query);
+  const [retryKey, setRetryKey] = useState(0);
+  const { results, loading, error } = useSearch(query, retryKey);
 
   const filtered = results.filter((r) => {
     if (activeFilter === 'This Month') {
@@ -93,6 +95,13 @@ export default function SearchScreen() {
       {loading ? (
         <View style={styles.centered}>
           <ActivityIndicator size="small" color="#0D9488" />
+        </View>
+      ) : error ? (
+        <View style={styles.centered}>
+          <Text style={styles.errorText}>{ERROR_COPY.search}</Text>
+          <TouchableOpacity onPress={() => setRetryKey((key) => key + 1)} activeOpacity={0.7}>
+            <Text style={styles.retryText}>Try again</Text>
+          </TouchableOpacity>
         </View>
       ) : query.length === 0 ? (
         <View style={styles.centered}>
@@ -218,6 +227,19 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: '#6B7280',
     textAlign: 'center',
+  },
+  errorText: {
+    fontFamily: 'DMSans-Regular',
+    fontSize: 15,
+    color: '#6B7280',
+    textAlign: 'center',
+    lineHeight: 22,
+    marginBottom: 10,
+  },
+  retryText: {
+    fontFamily: 'DMSans-SemiBold',
+    fontSize: 15,
+    color: '#0D9488',
   },
   footer: {
     flexDirection: 'row',

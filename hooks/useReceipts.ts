@@ -9,6 +9,7 @@ export function useReceipts() {
 
   const load = useCallback(async () => {
     try {
+      setLoading(true);
       setError(null);
       const data = await fetchReceipts();
       setReceipts(data);

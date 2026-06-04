@@ -42,7 +42,7 @@ describe('useSearch', () => {
     expect(result.current.results).toHaveLength(1);
   });
 
-  it('returns empty results on fetch error', async () => {
+  it('sets error and returns empty results on fetch error', async () => {
     mockSearchReceipts.mockRejectedValue(new Error('DB error'));
     const { result } = renderHook(() => useSearch('bunnings'));
 
@@ -50,6 +50,7 @@ describe('useSearch', () => {
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     expect(result.current.results).toHaveLength(0);
+    expect(result.current.error?.message).toBe('DB error');
   });
 
   it('clears results when query is cleared', async () => {

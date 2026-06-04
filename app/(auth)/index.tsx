@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { supabase } from '@/lib/supabase';
+import { ERROR_COPY } from '@/lib/errors';
 
 export default function WelcomeScreen() {
   const router = useRouter();
@@ -20,24 +21,37 @@ export default function WelcomeScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [formError, setFormError] = useState('');
 
   async function handleSignUp() {
+    setFormError('');
     setLoading(true);
-    const { error } = await supabase.auth.signUp({ email, password });
-    setLoading(false);
-    if (error) {
-      Alert.alert('Sign up failed', error.message);
-    } else {
-      Alert.alert('Check your email', 'We sent you a confirmation link.');
+    try {
+      const { error } = await supabase.auth.signUp({ email, password });
+      if (error) {
+        setFormError(ERROR_COPY.signUp);
+      } else {
+        Alert.alert('Check your email', 'We sent you a confirmation link.');
+      }
+    } catch {
+      setFormError(ERROR_COPY.signUp);
+    } finally {
+      setLoading(false);
     }
   }
 
   async function handleSignIn() {
+    setFormError('');
     setLoading(true);
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    setLoading(false);
-    if (error) {
-      Alert.alert('Sign in failed', error.message);
+    try {
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) {
+        setFormError(ERROR_COPY.auth);
+      }
+    } catch {
+      setFormError(ERROR_COPY.auth);
+    } finally {
+      setLoading(false);
     }
     // navigation handled by onAuthStateChange in root layout
   }
@@ -95,6 +109,7 @@ export default function WelcomeScreen() {
           autoCapitalize="none"
           value={email}
           onChangeText={setEmail}
+          editable={!loading}
         />
         <TextInput
           style={styles.input}
@@ -103,7 +118,10 @@ export default function WelcomeScreen() {
           secureTextEntry
           value={password}
           onChangeText={setPassword}
+          editable={!loading}
         />
+
+        {formError ? <Text style={styles.formError}>{formError}</Text> : null}
 
         <TouchableOpacity
           style={styles.primaryBtn}
@@ -233,5 +251,12 @@ const styles = StyleSheet.create({
     color: '#6B7280',
     textAlign: 'center',
     marginTop: 20,
+  },
+  formError: {
+    fontFamily: 'DMSans-Regular',
+    fontSize: 14,
+    color: '#DC2626',
+    lineHeight: 20,
+    marginBottom: 12,
   },
 });

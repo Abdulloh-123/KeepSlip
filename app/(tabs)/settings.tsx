@@ -11,6 +11,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Download, ShieldCheck, TriangleAlert, Trash2, FileText, LogOut } from 'lucide-react-native';
 import { supabase } from '@/lib/supabase';
+import { ERROR_COPY } from '@/lib/errors';
 
 export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
@@ -51,7 +52,7 @@ export default function SettingsScreen() {
           onPress: async () => {
             const { error } = await supabase.functions.invoke('delete-account');
             if (error) {
-              Alert.alert('Delete failed', error.message ?? 'Could not delete account.');
+              Alert.alert('Delete failed', ERROR_COPY.deleteAccount);
               return;
             }
             await supabase.auth.signOut();

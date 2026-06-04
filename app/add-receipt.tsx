@@ -5,16 +5,16 @@ import {
   StyleSheet,
   TouchableOpacity,
   ActivityIndicator,
-  Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import * as DocumentPicker from 'expo-document-picker';
 import { Camera, Upload, ChevronRight } from 'lucide-react-native';
 import { supabase, uploadReceiptImage } from '@/lib/supabase';
+import { ERROR_COPY } from '@/lib/errors';
 import type { ReceiptInsert } from '@/types/receipt';
 
-type Step = 'choose' | 'processing';
+type Step = 'choose' | 'processing' | 'error';
 
 export default function AddReceiptSheet() {
   const insets = useSafeAreaInsets();
@@ -77,9 +77,9 @@ export default function AddReceiptSheet() {
       if (insertError) throw insertError;
 
       router.replace(`/receipt/${inserted.id}`);
-    } catch (e: any) {
-      Alert.alert('Upload failed', e.message ?? 'Could not read receipt.');
-      setStep('choose');
+    } catch {
+      setStatus(ERROR_COPY.upload);
+      setStep('error');
     }
   }
 
@@ -88,6 +88,25 @@ export default function AddReceiptSheet() {
       <View style={styles.processingContainer}>
         <ActivityIndicator size="large" color="#0D9488" />
         <Text style={styles.statusText}>{status}</Text>
+      </View>
+    );
+  }
+
+  if (step === 'error') {
+    return (
+      <View style={styles.processingContainer}>
+        <Text style={styles.errorTitle}>Upload failed</Text>
+        <Text style={styles.statusText}>{status || ERROR_COPY.upload}</Text>
+        <TouchableOpacity
+          style={styles.primaryAction}
+          onPress={() => setStep('choose')}
+          activeOpacity={0.85}
+        >
+          <Text style={styles.primaryActionText}>Try Again</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={() => router.back()} activeOpacity={0.7}>
+          <Text style={styles.cancelText}>Cancel</Text>
+        </TouchableOpacity>
       </View>
     );
   }
@@ -202,5 +221,23 @@ const styles = StyleSheet.create({
     color: '#374151',
     textAlign: 'center',
     lineHeight: 24,
+  },
+  errorTitle: {
+    fontFamily: 'CabinetGrotesk-Bold',
+    fontSize: 28,
+    color: '#111827',
+    textAlign: 'center',
+  },
+  primaryAction: {
+    backgroundColor: '#0D9488',
+    borderRadius: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 36,
+    marginTop: 4,
+  },
+  primaryActionText: {
+    fontFamily: 'DMSans-SemiBold',
+    fontSize: 16,
+    color: '#fff',
   },
 });

@@ -12,13 +12,14 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import { useRouter } from 'expo-router';
 import { X, CheckCircle } from 'lucide-react-native';
 import { supabase, uploadReceiptImage } from '@/lib/supabase';
+import { ERROR_COPY } from '@/lib/errors';
 import type { ReceiptInsert } from '@/types/receipt';
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 const FRAME_W = SCREEN_W * 0.82;
 const FRAME_H = FRAME_W * 1.55; // receipt aspect ratio
 
-type Phase = 'camera' | 'processing' | 'success';
+type Phase = 'camera' | 'processing' | 'success' | 'error';
 
 export default function ScanScreen() {
   const router = useRouter();
@@ -83,9 +84,9 @@ export default function ScanScreen() {
       setSummary({ merchant: receipt.merchant_name, amount: receipt.total_amount });
       setInsertedId(inserted.id);
       setPhase('success');
-    } catch (e: any) {
-      Alert.alert('Scan failed', e.message ?? 'Could not read receipt.');
-      setPhase('camera');
+    } catch {
+      setStatus(ERROR_COPY.scan);
+      setPhase('error');
     }
   }
 
@@ -141,6 +142,25 @@ export default function ScanScreen() {
     );
   }
 
+  if (phase === 'error') {
+    return (
+      <View style={[styles.screen, styles.center, { backgroundColor: '#fff' }]}>
+        <Text style={styles.errorTitle}>Scan failed</Text>
+        <Text style={styles.errorBody}>{status || ERROR_COPY.scan}</Text>
+        <TouchableOpacity
+          style={styles.viewBtn}
+          onPress={() => setPhase('camera')}
+          activeOpacity={0.85}
+        >
+          <Text style={styles.viewBtnText}>Try Again</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={() => router.back()} activeOpacity={0.7}>
+          <Text style={styles.doneText}>Cancel</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.screen}>
       {/* Camera fill */}
@@ -149,8 +169,8 @@ export default function ScanScreen() {
         style={StyleSheet.absoluteFill}
         facing="back"
         onCameraReady={() => {}}
-        onMountError={(e) => {
-          Alert.alert('Camera error', e.message ?? 'Could not start camera.');
+        onMountError={() => {
+          Alert.alert('Camera unavailable', 'We could not start the camera. Please try again.');
           router.back();
         }}
       />
@@ -253,6 +273,19 @@ const styles = StyleSheet.create({
   actionBtnText: { fontFamily: 'DMSans-Bold', fontSize: 16, color: '#fff' },
   cancelText: { fontFamily: 'DMSans-Medium', fontSize: 14, color: '#9CA3AF' },
   processingText: { fontFamily: 'DMSans-Medium', fontSize: 16, color: '#374151' },
+  errorTitle: {
+    fontFamily: 'CabinetGrotesk-Bold',
+    fontSize: 28,
+    color: '#111827',
+    textAlign: 'center',
+  },
+  errorBody: {
+    fontFamily: 'DMSans-Regular',
+    fontSize: 15,
+    color: '#6B7280',
+    textAlign: 'center',
+    lineHeight: 22,
+  },
   successIconWrap: {
     width: 112,
     height: 112,

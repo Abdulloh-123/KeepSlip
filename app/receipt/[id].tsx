@@ -1,11 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  ActivityIndicator,
   Alert,
   Share,
   Modal,
@@ -17,6 +16,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ArrowLeft, ExternalLink, Share2, Trash2, X } from 'lucide-react-native';
 import * as WebBrowser from 'expo-web-browser';
 import { fetchReceipt, deleteReceipt, getReceiptFileUrl } from '@/lib/supabase';
+import { ERROR_COPY } from '@/lib/errors';
 import type { Receipt } from '@/types/receipt';
 
 function formatDate(iso: string): string {
@@ -30,14 +30,32 @@ export default function ReceiptDetailScreen() {
   const insets = useSafeAreaInsets();
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<'not-found' | 'failed' | null>(null);
   const [imageViewer, setImageViewer] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!id) return;
-    fetchReceipt(id)
-      .then(setReceipt)
-      .finally(() => setLoading(false));
+  const loadReceipt = useCallback(async () => {
+    if (!id) {
+      setLoading(false);
+      setLoadError('not-found');
+      return;
+    }
+
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const data = await fetchReceipt(id);
+      setReceipt(data);
+    } catch (e: any) {
+      setReceipt(null);
+      setLoadError(e?.code === 'PGRST116' ? 'not-found' : 'failed');
+    } finally {
+      setLoading(false);
+    }
   }, [id]);
+
+  useEffect(() => {
+    loadReceipt();
+  }, [loadReceipt]);
 
   async function handleShare() {
     if (!receipt) return;
@@ -55,8 +73,12 @@ export default function ReceiptDetailScreen() {
         text: 'Delete',
         style: 'destructive',
         onPress: async () => {
-          await deleteReceipt(id!);
-          router.back();
+          try {
+            await deleteReceipt(id!);
+            router.back();
+          } catch {
+            Alert.alert('Delete failed', ERROR_COPY.deleteReceipt);
+          }
         },
       },
     ]);
@@ -74,14 +96,40 @@ export default function ReceiptDetailScreen() {
         setImageViewer(url);
       }
     } catch {
-      Alert.alert('Error', 'Could not open file.');
+      Alert.alert('File unavailable', ERROR_COPY.originalFile);
     }
   }
 
   if (loading) {
     return (
+      <View style={[styles.screen, { paddingTop: insets.top }]}>
+        <View style={styles.skeletonHero}>
+          <View style={styles.skeletonTopRow}>
+            <View style={styles.skeletonCircle} />
+            <View style={styles.skeletonTitle} />
+            <View style={styles.skeletonCircle} />
+          </View>
+          <View style={styles.skeletonAmount} />
+          <View style={styles.skeletonSub} />
+        </View>
+        <View style={styles.skeletonBody}>
+          <View style={styles.skeletonTotalCard} />
+          <View style={styles.skeletonTotalCard} />
+        </View>
+      </View>
+    );
+  }
+
+  if (loadError === 'failed') {
+    return (
       <View style={[styles.loadingWrap, { paddingTop: insets.top }]}>
-        <ActivityIndicator size="large" color="#0D9488" />
+        <Text style={styles.errorText}>{ERROR_COPY.loadReceipt}</Text>
+        <TouchableOpacity onPress={loadReceipt} activeOpacity={0.7}>
+          <Text style={styles.linkText}>Try again</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={() => router.back()} activeOpacity={0.7}>
+          <Text style={styles.secondaryLinkText}>Go back</Text>
+        </TouchableOpacity>
       </View>
     );
   }
@@ -256,6 +304,59 @@ const styles = StyleSheet.create({
     fontFamily: 'DMSans-Medium',
     fontSize: 15,
     color: '#0D9488',
+  },
+  secondaryLinkText: {
+    fontFamily: 'DMSans-Medium',
+    fontSize: 15,
+    color: '#6B7280',
+  },
+  skeletonHero: {
+    backgroundColor: '#0D9488',
+    paddingHorizontal: 20,
+    paddingBottom: 28,
+    gap: 14,
+  },
+  skeletonTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 4,
+  },
+  skeletonCircle: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255,255,255,0.24)',
+  },
+  skeletonTitle: {
+    width: 84,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: 'rgba(255,255,255,0.24)',
+  },
+  skeletonAmount: {
+    width: 170,
+    height: 42,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.24)',
+    marginTop: 10,
+  },
+  skeletonSub: {
+    width: 210,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+  },
+  skeletonBody: {
+    padding: 16,
+    gap: 12,
+  },
+  skeletonTotalCard: {
+    height: 92,
+    borderRadius: 12,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#F1F5F9',
   },
   heroHeader: {
     backgroundColor: '#0D9488',
