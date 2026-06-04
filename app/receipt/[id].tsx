@@ -11,65 +11,18 @@ import {
   Modal,
   Image,
   StatusBar,
-  Linking,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ArrowLeft, Share2, ExternalLink, Trash2, X, Copy } from 'lucide-react-native';
+import { ArrowLeft, ExternalLink, Share2, Trash2, X } from 'lucide-react-native';
 import * as WebBrowser from 'expo-web-browser';
-import * as DocumentPicker from 'expo-document-picker';
-import { supabase, fetchReceipt, deleteReceipt, getReceiptFileUrl, uploadReceiptImage, updateReceipt } from '@/lib/supabase';
+import { fetchReceipt, deleteReceipt, getReceiptFileUrl } from '@/lib/supabase';
 import type { Receipt } from '@/types/receipt';
 
 function formatDate(iso: string): string {
   const d = new Date(iso);
   return d.toLocaleDateString('en-AU', { month: 'short', day: 'numeric' });
 }
-
-function formatDateTime(iso: string | null): string {
-  if (!iso) return 'Unknown';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return 'Unknown';
-  return d.toLocaleString('en-AU', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  });
-}
-
-function deriveGmailQuery(receipt: Receipt): string {
-  // Best: RFC 822 message ID links directly to the exact email
-  if (receipt.email_rfc822_message_id) {
-    return `rfc822msgid:${receipt.email_rfc822_message_id}`;
-  }
-
-  const parts: string[] = [];
-
-  // Extract bare email address from "Name <email@domain.com>" format
-  if (receipt.email_source) {
-    const match = receipt.email_source.match(/<([^>]+)>/);
-    const email = match ? match[1] : receipt.email_source.trim();
-    if (email.includes('@')) parts.push(`from:${email}`);
-  }
-
-  // Date range: ±1 day around when the email arrived (or receipt date as fallback)
-  const rawDate = receipt.email_received_at ?? receipt.date;
-  if (rawDate) {
-    const base = new Date(rawDate);
-    if (!Number.isNaN(base.getTime())) {
-      const fmt = (d: Date) =>
-        `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`;
-      const after = new Date(base); after.setDate(after.getDate() - 1);
-      const before = new Date(base); before.setDate(before.getDate() + 2);
-      parts.push(`after:${fmt(after)}`, `before:${fmt(before)}`);
-    }
-  }
-
-  return parts.join(' ');
-}
-
 
 export default function ReceiptDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -78,8 +31,6 @@ export default function ReceiptDetailScreen() {
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [loading, setLoading] = useState(true);
   const [imageViewer, setImageViewer] = useState<string | null>(null);
-  const [showLinkInstructions, setShowLinkInstructions] = useState(false);
-  const [uploading, setUploading] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -113,12 +64,9 @@ export default function ReceiptDetailScreen() {
 
   async function handleViewOriginal() {
     if (!receipt) return;
-    if (receipt.attachment_type === 'link_only') {
-      setShowLinkInstructions(true);
-      return;
-    }
     try {
-      const path = receipt.pdf_url ?? receipt.image_url!;
+      const path = receipt.pdf_url ?? receipt.image_url;
+      if (!path) return;
       const url = await getReceiptFileUrl(path);
       if (receipt.pdf_url) {
         await WebBrowser.openBrowserAsync(url, { presentationStyle: WebBrowser.WebBrowserPresentationStyle.PAGE_SHEET });
@@ -128,82 +76,6 @@ export default function ReceiptDetailScreen() {
     } catch {
       Alert.alert('Error', 'Could not open file.');
     }
-  }
-
-  async function handleUploadReceipt() {
-    const result = await DocumentPicker.getDocumentAsync({
-      type: ['image/*', 'application/pdf'],
-      copyToCacheDirectory: true,
-    });
-    if (result.canceled || !result.assets[0]) return;
-
-    const asset = result.assets[0];
-    setUploading(true);
-    try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error('Not authenticated');
-
-      const mimeType = asset.mimeType ?? 'image/jpeg';
-      const storagePath = await uploadReceiptImage(user.id, asset.uri, mimeType);
-      const isImage = mimeType.includes('image');
-
-      const updated = await updateReceipt(receipt!.id, {
-        image_url: isImage ? storagePath : null,
-        pdf_url: !isImage ? storagePath : null,
-        attachment_type: isImage ? 'image' : 'pdf',
-      });
-
-      setReceipt(updated);
-      setShowLinkInstructions(false);
-      Alert.alert('Uploaded', 'Receipt file saved.');
-    } catch (e: any) {
-      Alert.alert('Upload failed', e.message ?? 'Could not upload file.');
-    } finally {
-      setUploading(false);
-    }
-  }
-
-  async function handleOpenSourceEmail() {
-    if (!receipt) return;
-
-    const query = deriveGmailQuery(receipt);
-    const directWebUrl = receipt.email_message_id
-      ? `https://mail.google.com/mail/u/0/#all/${encodeURIComponent(receipt.email_message_id)}`
-      : null;
-    const webSearchUrl = `https://mail.google.com/mail/u/0/#search/${encodeURIComponent(query)}`;
-
-    const appCandidates = [
-      `googlegmail:///search/${encodeURIComponent(query)}`,
-      `googlegmail:///search?query=${encodeURIComponent(query)}`,
-      directWebUrl ? `googlegmail:///all/${encodeURIComponent(receipt.email_message_id ?? '')}` : null,
-      'googlegmail://',
-    ].filter(Boolean) as string[];
-
-    try {
-      const hasGmailApp = await Linking.canOpenURL('googlegmail://');
-
-      if (hasGmailApp) {
-        for (const url of appCandidates) {
-          const canOpen = await Linking.canOpenURL(url);
-          if (canOpen) {
-            await Linking.openURL(url);
-            return;
-          }
-        }
-      }
-
-      await Linking.openURL(directWebUrl ?? webSearchUrl);
-    } catch {
-      Alert.alert('Could not open email', 'Please open Gmail and search using the keywords shown.');
-    }
-  }
-
-  async function handleCopySearchQuery() {
-    if (!receipt) return;
-    const query = deriveGmailQuery(receipt);
-    try {
-      await Share.share({ message: query });
-    } catch {}
   }
 
   if (loading) {
@@ -247,73 +119,12 @@ export default function ReceiptDetailScreen() {
       </View>
     </Modal>
   );
-  const LinkInstructionsModal = (
-    <Modal visible={showLinkInstructions} transparent animationType="fade" onRequestClose={() => setShowLinkInstructions(false)}>
-      <View style={styles.instructionsOverlay}>
-        <View style={styles.instructionsCard}>
-          <View style={styles.instructionsHeader}>
-            <Text style={styles.instructionsTitle}>Get the Original Receipt</Text>
-            <TouchableOpacity onPress={() => setShowLinkInstructions(false)} activeOpacity={0.7}>
-              <X size={18} color="#6B7280" />
-            </TouchableOpacity>
-          </View>
-          <Text style={styles.instructionsBody}>
-            This receipt was created from the details written in the email. To get the official
-            receipt file, open that email in Gmail, open the receipt link, and download the file
-            manually before uploading it here.
-          </Text>
-          <View style={styles.instructionsInfo}>
-            <Text style={styles.instructionsLabel}>Search query</Text>
-            <Text style={styles.instructionsValue}>{receipt ? deriveGmailQuery(receipt) : ''}</Text>
-            <Text style={styles.instructionsLabel}>Received</Text>
-            <Text style={styles.instructionsValue}>{formatDateTime(receipt?.email_received_at ?? null)}</Text>
-            <Text style={styles.instructionsLabel}>Sender</Text>
-            <Text style={styles.instructionsValue}>{receipt?.email_source ?? 'Unknown'}</Text>
-          </View>
-          <View style={styles.instructionsSteps}>
-            <Text style={styles.stepLine}>1. Open Gmail and find the email using the search query above.</Text>
-            <Text style={styles.stepLine}>2. Open the receipt link inside the email.</Text>
-            <Text style={styles.stepLine}>3. Download the receipt file (PDF or image).</Text>
-            <Text style={styles.stepLine}>4. Come back here and tap "Upload Receipt" below.</Text>
-          </View>
-          <TouchableOpacity
-            style={styles.gmailButton}
-            onPress={handleOpenSourceEmail}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.gmailButtonText}>Open Gmail</Text>
-            <ExternalLink size={15} color="#0D9488" />
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.copyButton}
-            onPress={handleCopySearchQuery}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.copyButtonText}>Copy Search Query</Text>
-            <Copy size={15} color="#4B5563" />
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.uploadBtn}
-            onPress={handleUploadReceipt}
-            activeOpacity={0.8}
-            disabled={uploading}
-          >
-            {uploading
-              ? <ActivityIndicator size="small" color="#fff" />
-              : <Text style={styles.uploadBtnText}>Upload Receipt</Text>
-            }
-          </TouchableOpacity>
-        </View>
-      </View>
-    </Modal>
-  );
   const tax = receipt.total_amount - subtotal;
   const hasLineItems = lineItems.length > 0;
 
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
       {ImageViewerModal}
-      {LinkInstructionsModal}
       {/* Teal hero header */}
       <View style={styles.heroHeader}>
         {/* App bar row */}
@@ -392,7 +203,7 @@ export default function ReceiptDetailScreen() {
           </View>
 
           {/* View original */}
-          {(receipt.image_url || receipt.pdf_url || receipt.attachment_type === 'link_only') && (
+          {(receipt.image_url || receipt.pdf_url) && (
             <TouchableOpacity
               style={[styles.totalRow, styles.actionRowBorder]}
               onPress={handleViewOriginal}
@@ -597,109 +408,6 @@ const styles = StyleSheet.create({
   actionLabel: {
     fontFamily: 'DMSans-Medium',
     fontSize: 14,
-    color: '#374151',
-  },
-  gmailButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    height: 42,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#99F6E4',
-    backgroundColor: '#F0FDFA',
-  },
-  gmailButtonText: {
-    fontFamily: 'DMSans-SemiBold',
-    fontSize: 13,
-    color: '#0D9488',
-  },
-  copyButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    height: 40,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    backgroundColor: '#FFFFFF',
-  },
-  copyButtonText: {
-    fontFamily: 'DMSans-SemiBold',
-    fontSize: 13,
-    color: '#4B5563',
-  },
-  uploadBtn: {
-    height: 44,
-    borderRadius: 10,
-    backgroundColor: '#0D9488',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  uploadBtnText: {
-    fontFamily: 'DMSans-SemiBold',
-    fontSize: 14,
-    color: '#fff',
-  },
-  instructionsOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.45)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 20,
-  },
-  instructionsCard: {
-    width: '100%',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    paddingHorizontal: 14,
-    paddingVertical: 14,
-    gap: 10,
-  },
-  instructionsHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  instructionsTitle: {
-    fontFamily: 'DMSans-SemiBold',
-    fontSize: 16,
-    color: '#111827',
-  },
-  instructionsBody: {
-    fontFamily: 'DMSans-Regular',
-    fontSize: 13,
-    lineHeight: 18,
-    color: '#4B5563',
-  },
-  instructionsInfo: {
-    backgroundColor: '#F9FAFB',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    gap: 4,
-  },
-  instructionsLabel: {
-    fontFamily: 'DMSans-Medium',
-    fontSize: 11,
-    color: '#6B7280',
-  },
-  instructionsValue: {
-    fontFamily: 'DMSans-Regular',
-    fontSize: 12,
-    color: '#111827',
-  },
-  instructionsSteps: {
-    gap: 2,
-  },
-  stepLine: {
-    fontFamily: 'DMSans-Regular',
-    fontSize: 12,
-    lineHeight: 18,
     color: '#374151',
   },
   deleteRow: {

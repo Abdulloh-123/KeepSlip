@@ -1,7 +1,7 @@
 import 'react-native-url-polyfill/auto';
 import { createClient } from '@supabase/supabase-js';
 import * as SecureStore from 'expo-secure-store';
-import type { PendingEmailReceipt, Receipt, ReceiptInsert } from '@/types/receipt';
+import type { Receipt, ReceiptInsert } from '@/types/receipt';
 
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY!;
@@ -89,47 +89,6 @@ export async function fetchReceiptsByIds(ids: string[]): Promise<Receipt[]> {
 
   const byId = new Map((data as Receipt[]).map((receipt) => [receipt.id, receipt]));
   return ids.map((id) => byId.get(id)).filter((receipt): receipt is Receipt => Boolean(receipt));
-}
-
-export async function fetchPendingEmailReceipts(): Promise<PendingEmailReceipt[]> {
-  const { data, error } = await supabase
-    .from('pending_email_receipts')
-    .select('*')
-    .eq('status', 'unresolved')
-    .order('email_received_at', { ascending: true, nullsFirst: false });
-  if (error) throw error;
-  return data as PendingEmailReceipt[];
-}
-
-export async function fetchPendingEmailReceiptsByIds(
-  ids: string[]
-): Promise<PendingEmailReceipt[]> {
-  if (ids.length === 0) return [];
-  const { data, error } = await supabase
-    .from('pending_email_receipts')
-    .select('*')
-    .in('id', ids);
-  if (error) throw error;
-
-  const byId = new Map((data as PendingEmailReceipt[]).map((item) => [item.id, item]));
-  return ids.map((id) => byId.get(id)).filter((item): item is PendingEmailReceipt => Boolean(item));
-}
-
-export async function countPendingEmailReceipts(): Promise<number> {
-  const { count, error } = await supabase
-    .from('pending_email_receipts')
-    .select('id', { count: 'exact', head: true })
-    .eq('status', 'unresolved');
-  if (error) throw error;
-  return count ?? 0;
-}
-
-export async function resolvePendingEmailReceipt(id: string): Promise<void> {
-  const { error } = await supabase
-    .from('pending_email_receipts')
-    .update({ status: 'resolved', resolved_at: new Date().toISOString() })
-    .eq('id', id);
-  if (error) throw error;
 }
 
 export async function insertReceipt(receipt: ReceiptInsert): Promise<Receipt> {

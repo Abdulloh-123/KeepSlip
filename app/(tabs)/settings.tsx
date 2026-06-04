@@ -1,4 +1,4 @@
-import { useCallback, useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -9,29 +9,18 @@ import {
   Linking,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useFocusEffect, useRouter } from 'expo-router';
 import { Download, ShieldCheck, TriangleAlert, Trash2, FileText, LogOut } from 'lucide-react-native';
-import { countPendingEmailReceipts, supabase } from '@/lib/supabase';
+import { supabase } from '@/lib/supabase';
 
 export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
-  const router = useRouter();
   const [userEmail, setUserEmail] = useState('');
-  const [attentionCount, setAttentionCount] = useState<number | null>(null);
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
       setUserEmail(data.user?.email ?? '');
     });
   }, []);
-
-  useFocusEffect(
-    useCallback(() => {
-      countPendingEmailReceipts()
-        .then(setAttentionCount)
-        .catch(() => setAttentionCount(0));
-    }, [])
-  );
 
   const initials = userEmail
     ? userEmail.split('@')[0].slice(0, 2).toUpperCase()
@@ -106,24 +95,6 @@ export default function SettingsScreen() {
             <Text style={styles.chevron}>›</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity
-            style={styles.card}
-            onPress={() => router.push('/email-attention')}
-            activeOpacity={0.7}
-          >
-            <View style={[styles.cardAvatar, { backgroundColor: '#FFFBEB' }]}>
-              <TriangleAlert size={18} color="#D97706" />
-            </View>
-            <View style={styles.cardInfo}>
-              <Text style={styles.cardTitle}>Receipts need attention</Text>
-              <Text style={styles.cardSub}>
-                {attentionCount === null
-                  ? 'Checking unresolved email receipts'
-                  : `${attentionCount} waiting for manual upload`}
-              </Text>
-            </View>
-            <Text style={styles.chevron}>›</Text>
-          </TouchableOpacity>
         </View>
 
         {/* Bottom section */}

@@ -16,7 +16,7 @@ const CATEGORY_COLORS: Record<string, string> = {
 
 const SOURCE_LABELS: Record<string, string> = {
   manual_scan: 'Scanned',
-  email_agent: 'Email import',
+  email_agent: 'Imported',
   store_tap: 'Store tap',
 };
 

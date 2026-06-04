@@ -80,18 +80,6 @@ export default function RootLayout() {
           name="add-receipt"
           options={{ presentation: 'transparentModal', headerShown: false }}
         />
-        <Stack.Screen
-          name="email-import"
-          options={{ presentation: 'modal', headerShown: false }}
-        />
-        <Stack.Screen
-          name="email-import-results"
-          options={{ presentation: 'card', headerShown: false }}
-        />
-        <Stack.Screen
-          name="email-attention"
-          options={{ presentation: 'card', headerShown: false }}
-        />
       </Stack>
     </GestureHandlerRootView>
   );
