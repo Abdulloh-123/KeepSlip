@@ -16,6 +16,10 @@ jest.mock('expo-router', () => ({
   useRouter: () => ({ replace: jest.fn(), back: jest.fn() }),
 }));
 
+jest.mock('expo-linking', () => ({
+  createURL: jest.fn(() => 'ireceipt://'),
+}));
+
 const mockAuth = supabase.auth as jest.Mocked<typeof supabase.auth>;
 
 describe('WelcomeScreen', () => {
@@ -52,6 +56,7 @@ describe('WelcomeScreen', () => {
       expect(mockAuth.signUp).toHaveBeenCalledWith({
         email: 'test@example.com',
         password: 'password123',
+        options: { emailRedirectTo: 'ireceipt://' },
       })
     );
   });
@@ -64,7 +69,7 @@ describe('WelcomeScreen', () => {
 
     fireEvent.press(getByText('I already have an account'));
     fireEvent.changeText(getByPlaceholderText('Email'), 'test@example.com');
-    fireEvent.changeText(getByPlaceholderText('Password'), 'wrong');
+    fireEvent.changeText(getByPlaceholderText('Password'), 'wrongpass');
     fireEvent.press(getByText('Sign in'));
 
     await waitFor(() =>

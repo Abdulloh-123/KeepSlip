@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import {
   useFonts,
@@ -20,6 +20,7 @@ const ONBOARDING_KEY = 'onboarding_complete';
 export default function RootLayout() {
   const router = useRouter();
   const segments = useSegments();
+  const [authChecked, setAuthChecked] = useState(false);
 
   const [fontsLoaded] = useFonts({
     'DMSans-Regular': DMSans_400Regular,
@@ -31,35 +32,51 @@ export default function RootLayout() {
   });
 
   useEffect(() => {
-    if (fontsLoaded) {
+    if (fontsLoaded && authChecked) {
       SplashScreen.hideAsync();
     }
-  }, [fontsLoaded]);
+  }, [fontsLoaded, authChecked]);
 
   useEffect(() => {
+    let mounted = true;
+
+    async function routeForSession(session: Awaited<ReturnType<typeof supabase.auth.getSession>>['data']['session']) {
+      const inAuthGroup = segments[0] === '(auth)';
+      const inOnboarding = segments[0] === '(onboarding)';
+
+      if (!session) {
+        if (!inAuthGroup) router.replace('/(auth)');
+        return;
+      }
+
+      const done = await SecureStore.getItemAsync(ONBOARDING_KEY);
+      if (!done && !inOnboarding) {
+        router.replace('/(onboarding)/welcome');
+      } else if (done && (inAuthGroup || inOnboarding)) {
+        router.replace('/(tabs)');
+      }
+    }
+
+    supabase.auth.getSession().then(async ({ data }) => {
+      if (!mounted) return;
+      await routeForSession(data.session);
+      setAuthChecked(true);
+    });
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (_event, session) => {
-        const inAuthGroup = segments[0] === '(auth)';
-        const inOnboarding = segments[0] === '(onboarding)';
-
-        if (!session && !inAuthGroup) {
-          router.replace('/(auth)');
-        } else if (session && inAuthGroup) {
-          // New sign-in: route through onboarding for first-timers
-          const done = await SecureStore.getItemAsync(ONBOARDING_KEY);
-          if (done) {
-            router.replace('/(tabs)');
-          } else {
-            router.replace('/(onboarding)/welcome');
-          }
-        }
-        // inOnboarding or inTabs with session — let screens control their own flow
+        if (!mounted) return;
+        await routeForSession(session);
+        setAuthChecked(true);
       }
     );
-    return () => subscription.unsubscribe();
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
   }, [segments]);
 
-  if (!fontsLoaded) return null;
+  if (!fontsLoaded || !authChecked) return null;
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>

@@ -12,8 +12,22 @@ import {
   Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import * as Linking from 'expo-linking';
 import { supabase } from '@/lib/supabase';
 import { ERROR_COPY } from '@/lib/errors';
+
+const emailRedirectTo = Linking.createURL('/');
+
+function validateAuthForm(email: string, password: string): string | null {
+  const trimmedEmail = email.trim();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
+    return 'Enter a valid email address.';
+  }
+  if (password.length < 8) {
+    return 'Password must be at least 8 characters.';
+  }
+  return null;
+}
 
 export default function WelcomeScreen() {
   const router = useRouter();
@@ -25,9 +39,19 @@ export default function WelcomeScreen() {
 
   async function handleSignUp() {
     setFormError('');
+    const validationError = validateAuthForm(email, password);
+    if (validationError) {
+      setFormError(validationError);
+      return;
+    }
+
     setLoading(true);
     try {
-      const { error } = await supabase.auth.signUp({ email, password });
+      const { error } = await supabase.auth.signUp({
+        email: email.trim().toLowerCase(),
+        password,
+        options: { emailRedirectTo },
+      });
       if (error) {
         setFormError(ERROR_COPY.signUp);
       } else {
@@ -42,9 +66,18 @@ export default function WelcomeScreen() {
 
   async function handleSignIn() {
     setFormError('');
+    const validationError = validateAuthForm(email, password);
+    if (validationError) {
+      setFormError(validationError);
+      return;
+    }
+
     setLoading(true);
     try {
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      const { error } = await supabase.auth.signInWithPassword({
+        email: email.trim().toLowerCase(),
+        password,
+      });
       if (error) {
         setFormError(ERROR_COPY.auth);
       }
@@ -107,6 +140,8 @@ export default function WelcomeScreen() {
           placeholderTextColor="#9CA3AF"
           keyboardType="email-address"
           autoCapitalize="none"
+          autoComplete="email"
+          textContentType="emailAddress"
           value={email}
           onChangeText={setEmail}
           editable={!loading}
@@ -116,6 +151,8 @@ export default function WelcomeScreen() {
           placeholder="Password"
           placeholderTextColor="#9CA3AF"
           secureTextEntry
+          autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
+          textContentType={mode === 'signup' ? 'newPassword' : 'password'}
           value={password}
           onChangeText={setPassword}
           editable={!loading}
