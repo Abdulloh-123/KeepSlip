@@ -25,7 +25,10 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#F8FAFC"
       },
-      "package": "com.ireceipt.app"
+      "package": "com.ireceipt.app",
+      "permissions": [
+        "android.permission.CAMERA"
+      ]
     },
     "web": {
       "bundler": "metro",
@@ -48,6 +51,15 @@
     ],
     "experiments": {
       "typedRoutes": true
-    }
+    },
+    "extra": {
+      "router": {
+        "origin": false
+      },
+      "eas": {
+        "projectId": "49d7083e-9eb8-43f8-b657-e7ec3b19cde6"
+      }
+    },
+    "owner": "sonic_123"
   }
 }
