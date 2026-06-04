@@ -64,7 +64,8 @@ export async function fetchReceipts(): Promise<Receipt[]> {
   const { data, error } = await supabase
     .from('receipts')
     .select('*')
-    .order('date', { ascending: false });
+    .order('date', { ascending: false })
+    .limit(100);
   if (error) throw error;
   return data as Receipt[];
 }
@@ -138,7 +139,8 @@ export async function searchReceipts(query: string): Promise<Receipt[]> {
     .from('receipts')
     .select('*')
     .textSearch('search_vector', query, { type: 'websearch' })
-    .order('date', { ascending: false });
+    .order('date', { ascending: false })
+    .limit(50);
   if (error) throw error;
   return data as Receipt[];
 }
