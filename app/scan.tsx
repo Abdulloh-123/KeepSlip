@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect } from 'react';
+import { useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -13,7 +13,6 @@ import { useRouter } from 'expo-router';
 import { X, CheckCircle } from 'lucide-react-native';
 import { supabase, uploadReceiptImage } from '@/lib/supabase';
 import { ERROR_COPY } from '@/lib/errors';
-import type { ReceiptInsert } from '@/types/receipt';
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 const FRAME_W = SCREEN_W * 0.82;
@@ -29,14 +28,6 @@ export default function ScanScreen() {
   const [status, setStatus] = useState('');
   const [insertedId, setInsertedId] = useState<string | null>(null);
   const [summary, setSummary] = useState<{ merchant: string; amount: number } | null>(null);
-
-  useEffect(() => {
-    if (phase !== 'success') return;
-    const t = setTimeout(() => {
-      router.navigate('/(tabs)');
-    }, 2000);
-    return () => clearTimeout(t);
-  }, [phase]);
 
   async function handleCapture() {
     if (!cameraRef.current) return;
@@ -57,32 +48,13 @@ export default function ScanScreen() {
         body: { storage_path: storagePath, mime_type: 'image/jpeg' },
       });
       if (error) throw error;
+      if (!data?.receipt_id) throw new Error('Receipt was not saved');
 
-      const receipt: ReceiptInsert = {
-        source: 'manual_scan',
-        merchant_name: data.merchant_name ?? 'Unknown',
-        date: data.date ?? new Date().toISOString().slice(0, 10),
-        total_amount: data.total_amount ?? 0,
-        currency: data.currency ?? 'AUD',
-        category: data.category ?? null,
-        is_business: false,
-        line_items: data.line_items ?? [],
-        image_url: storagePath,
-        pdf_url: null,
-        email_source: null,
-        attachment_type: 'image',
-        raw_text: null,
-      };
-
-      const { data: inserted, error: insertError } = await supabase
-        .from('receipts')
-        .insert({ ...receipt, user_id: user.id })
-        .select()
-        .single();
-      if (insertError) throw insertError;
-
-      setSummary({ merchant: receipt.merchant_name, amount: receipt.total_amount });
-      setInsertedId(inserted.id);
+      setSummary({
+        merchant: data.merchant_name ?? 'Unknown',
+        amount: Number(data.total_amount ?? 0),
+      });
+      setInsertedId(data.receipt_id);
       setPhase('success');
     } catch {
       setStatus(ERROR_COPY.scan);
@@ -130,12 +102,12 @@ export default function ScanScreen() {
         )}
         <TouchableOpacity
           style={styles.viewBtn}
-          onPress={() => router.navigate(`/receipt/${insertedId}`)}
+          onPress={() => router.replace(`/receipt/${insertedId}`)}
           activeOpacity={0.85}
         >
           <Text style={styles.viewBtnText}>View Receipt</Text>
         </TouchableOpacity>
-        <TouchableOpacity onPress={() => router.navigate('/(tabs)')} activeOpacity={0.7}>
+        <TouchableOpacity onPress={() => router.replace('/(tabs)')} activeOpacity={0.7}>
           <Text style={styles.doneText}>Done</Text>
         </TouchableOpacity>
       </View>

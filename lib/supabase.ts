@@ -135,14 +135,33 @@ export async function deleteReceipt(id: string): Promise<void> {
 }
 
 export async function searchReceipts(query: string): Promise<Receipt[]> {
+  const trimmed = query.trim();
+  const amountText = trimmed.replace(/[^0-9.]/g, '');
+  const amount = amountText ? Number(amountText) : NaN;
+
   const { data, error } = await supabase
     .from('receipts')
     .select('*')
-    .textSearch('search_vector', query, { type: 'websearch' })
+    .textSearch('search_vector', trimmed, { type: 'websearch' })
     .order('date', { ascending: false })
     .limit(50);
   if (error) throw error;
-  return data as Receipt[];
+
+  if (!Number.isFinite(amount)) return data as Receipt[];
+
+  const { data: amountData, error: amountError } = await supabase
+    .from('receipts')
+    .select('*')
+    .eq('total_amount', amount)
+    .order('date', { ascending: false })
+    .limit(50);
+  if (amountError) throw amountError;
+
+  const byId = new Map<string, Receipt>();
+  for (const receipt of [...(data as Receipt[]), ...(amountData as Receipt[])]) {
+    byId.set(receipt.id, receipt);
+  }
+  return Array.from(byId.values()).sort((a, b) => b.date.localeCompare(a.date));
 }
 
 // ── Storage ───────────────────────────────────────────────────────────────────
@@ -154,7 +173,13 @@ export async function uploadReceiptImage(
   uri: string,
   mimeType: string
 ): Promise<string> {
-  const ext = mimeType.includes('pdf') ? 'pdf' : 'jpg';
+  const ext = mimeType.includes('pdf')
+    ? 'pdf'
+    : mimeType.includes('png')
+    ? 'png'
+    : mimeType.includes('webp')
+    ? 'webp'
+    : 'jpg';
   const path = `${userId}/${Date.now()}.${ext}`;
 
   const { data: { session } } = await supabase.auth.getSession();
@@ -184,12 +209,12 @@ export async function uploadReceiptImage(
   return path;
 }
 
-// Generates a 1-hour signed URL for a private receipt file.
+// Generates a short-lived signed URL for a private receipt file.
 // image_url / pdf_url columns store storage paths, not public URLs.
 export async function getReceiptFileUrl(path: string): Promise<string> {
   const { data, error } = await supabase.storage
     .from('receipts')
-    .createSignedUrl(path, 3600);
+    .createSignedUrl(path, 10 * 60);
   if (error) throw error;
   return data.signedUrl;
 }

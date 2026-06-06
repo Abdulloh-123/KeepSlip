@@ -24,6 +24,11 @@ function formatDate(iso: string): string {
   return d.toLocaleDateString('en-AU', { month: 'short', day: 'numeric' });
 }
 
+function formatMoney(value: unknown): string {
+  const amount = Number(value ?? 0);
+  return Number.isFinite(amount) ? amount.toFixed(2) : '0.00';
+}
+
 export default function ReceiptDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
@@ -61,7 +66,7 @@ export default function ReceiptDetailScreen() {
     if (!receipt) return;
     try {
       await Share.share({
-        message: `${receipt.merchant_name} — $${receipt.total_amount.toFixed(2)} on ${receipt.date}`,
+        message: `${receipt.merchant_name} — $${formatMoney(receipt.total_amount)} on ${receipt.date}`,
       });
     } catch {}
   }
@@ -145,7 +150,13 @@ export default function ReceiptDetailScreen() {
     );
   }
 
-  const lineItems = Array.isArray(receipt.line_items) ? receipt.line_items : [];
+  const lineItems = Array.isArray(receipt.line_items)
+    ? receipt.line_items.map((item) => ({
+      description: String(item?.description ?? 'Item'),
+      amount: Number.isFinite(Number(item?.amount)) ? Number(item.amount) : 0,
+    }))
+    : [];
+  const receiptTotal = Number.isFinite(Number(receipt.total_amount)) ? Number(receipt.total_amount) : 0;
   const subtotal = lineItems.reduce((sum, item) => sum + item.amount, 0);
 
   const ImageViewerModal = (
@@ -167,7 +178,7 @@ export default function ReceiptDetailScreen() {
       </View>
     </Modal>
   );
-  const tax = receipt.total_amount - subtotal;
+  const tax = receiptTotal - subtotal;
   const hasLineItems = lineItems.length > 0;
 
   return (
@@ -191,7 +202,7 @@ export default function ReceiptDetailScreen() {
           {receipt.category && (
             <Text style={styles.categoryLabel}>{receipt.category.toUpperCase()}</Text>
           )}
-          <Text style={styles.amtValue}>${receipt.total_amount.toFixed(2)}</Text>
+          <Text style={styles.amtValue}>${formatMoney(receiptTotal)}</Text>
           <Text style={styles.merchantDate}>
             {receipt.merchant_name} · {formatDate(receipt.date)}
           </Text>
@@ -218,7 +229,7 @@ export default function ReceiptDetailScreen() {
                   <View style={styles.lineInfo}>
                     <Text style={styles.lineDesc}>{item.description}</Text>
                   </View>
-                  <Text style={styles.lineAmt}>${item.amount.toFixed(2)}</Text>
+                  <Text style={styles.lineAmt}>${formatMoney(item.amount)}</Text>
                 </View>
               ))}
             </View>
@@ -232,7 +243,7 @@ export default function ReceiptDetailScreen() {
               <View style={styles.lineInfo}>
                 <Text style={styles.totalLabel}>Subtotal</Text>
               </View>
-              <Text style={styles.totalValue}>${subtotal.toFixed(2)}</Text>
+              <Text style={styles.totalValue}>${formatMoney(subtotal)}</Text>
             </View>
           )}
           {hasLineItems && tax > 0 && (
@@ -240,14 +251,14 @@ export default function ReceiptDetailScreen() {
               <View style={styles.lineInfo}>
                 <Text style={styles.totalLabel}>Tax</Text>
               </View>
-              <Text style={styles.totalValue}>${tax.toFixed(2)}</Text>
+              <Text style={styles.totalValue}>${formatMoney(tax)}</Text>
             </View>
           )}
           <View style={[styles.totalRow, styles.totalRowHighlight]}>
             <View style={styles.lineInfo}>
               <Text style={styles.totalLabelBold}>Total</Text>
             </View>
-            <Text style={styles.totalValueTeal}>${receipt.total_amount.toFixed(2)}</Text>
+            <Text style={styles.totalValueTeal}>${formatMoney(receiptTotal)}</Text>
           </View>
 
           {/* View original */}

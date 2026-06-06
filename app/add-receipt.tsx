@@ -12,7 +12,6 @@ import * as DocumentPicker from 'expo-document-picker';
 import { Camera, Upload, ChevronRight } from 'lucide-react-native';
 import { supabase, uploadReceiptImage } from '@/lib/supabase';
 import { ERROR_COPY } from '@/lib/errors';
-import type { ReceiptInsert } from '@/types/receipt';
 
 type Step = 'choose' | 'processing' | 'error';
 
@@ -23,7 +22,7 @@ export default function AddReceiptSheet() {
   const [status, setStatus] = useState('');
 
   function handleCameraScan() {
-    router.push('/scan');
+    router.replace('/scan');
   }
 
   async function handleFilePick() {
@@ -50,33 +49,9 @@ export default function AddReceiptSheet() {
         body: { storage_path: storagePath, mime_type: mimeType },
       });
       if (error) throw error;
+      if (!data?.receipt_id) throw new Error('Receipt was not saved');
 
-      const isImage = mimeType.includes('image');
-      const isPdf = mimeType.includes('pdf');
-      const receipt: ReceiptInsert = {
-        source: 'manual_scan',
-        merchant_name: data.merchant_name ?? 'Unknown',
-        date: data.date ?? new Date().toISOString().slice(0, 10),
-        total_amount: data.total_amount ?? 0,
-        currency: data.currency ?? 'AUD',
-        category: data.category ?? null,
-        is_business: false,
-        line_items: data.line_items ?? [],
-        image_url: isImage ? storagePath : null,
-        pdf_url: isPdf ? storagePath : null,
-        email_source: null,
-        attachment_type: isImage ? 'image' : 'pdf',
-        raw_text: null,
-      };
-
-      const { data: inserted, error: insertError } = await supabase
-        .from('receipts')
-        .insert({ ...receipt, user_id: user.id })
-        .select()
-        .single();
-      if (insertError) throw insertError;
-
-      router.replace(`/receipt/${inserted.id}`);
+      router.replace(`/receipt/${data.receipt_id}`);
     } catch {
       setStatus(ERROR_COPY.upload);
       setStep('error');

@@ -7,9 +7,11 @@ export function useSearch(query: string, retryKey = 0) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const requestSeq = useRef(0);
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
+    const seq = ++requestSeq.current;
 
     if (!query.trim()) {
       setResults([]);
@@ -23,12 +25,14 @@ export function useSearch(query: string, retryKey = 0) {
     debounceRef.current = setTimeout(async () => {
       try {
         const data = await searchReceipts(query);
+        if (seq !== requestSeq.current) return;
         setResults(data);
       } catch (e) {
+        if (seq !== requestSeq.current) return;
         setResults([]);
         setError(e as Error);
       } finally {
-        setLoading(false);
+        if (seq === requestSeq.current) setLoading(false);
       }
     }, 300);
 

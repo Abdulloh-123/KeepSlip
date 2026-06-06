@@ -28,14 +28,15 @@ async function logFunctionEvent(
     metadata?: Record<string, unknown>;
   }
 ) {
-  await supabase.from('function_events').insert({
+  const { error } = await supabase.from('function_events').insert({
     user_id: params.userId ?? null,
     function_name: 'delete-account',
     event_type: params.eventType,
     severity: params.severity,
     request_id: params.requestId,
     metadata: params.metadata ?? {},
-  }).then(() => {});
+  });
+  if (error) console.error('function_events insert failed', params.requestId, error.message);
 }
 
 async function deleteUserStorageFolder(
@@ -46,13 +47,17 @@ async function deleteUserStorageFolder(
   const pageSize = 100;
 
   while (true) {
-    const { data, error } = await supabase.storage
-      .from('receipts')
-      .list(prefix, { limit: pageSize, offset: 0 });
+    const { data, error } = await supabase
+      .schema('storage')
+      .from('objects')
+      .select('name')
+      .eq('bucket_id', 'receipts')
+      .like('name', `${prefix}%`)
+      .limit(pageSize);
     if (error) throw error;
     if (!data || data.length === 0) break;
 
-    const paths = data.map((file) => `${prefix}${file.name}`);
+    const paths = data.map((file) => file.name);
     const { error: removeError } = await supabase.storage.from('receipts').remove(paths);
     if (removeError) throw removeError;
 
@@ -86,12 +91,22 @@ serve(async (req) => {
     }
     userId = user.id;
 
-    const { data: allowed } = await supabase.rpc('check_rate_limit', {
+    const { data: allowed, error: rateLimitError } = await supabase.rpc('check_rate_limit', {
       p_user_id: user.id,
       p_action: 'delete_account',
       p_limit: 3,
       p_window_seconds: 60 * 60,
     });
+    if (rateLimitError) {
+      await logFunctionEvent(supabase, {
+        userId: user.id,
+        eventType: 'rate_limit_error',
+        severity: 'error',
+        requestId,
+        metadata: { message: rateLimitError.message },
+      });
+      return jsonResponse({ error: 'Rate limit unavailable', request_id: requestId }, 503);
+    }
     if (!allowed) {
       await logFunctionEvent(supabase, {
         userId: user.id,
@@ -110,15 +125,18 @@ serve(async (req) => {
       .eq('user_id', user.id);
     if (deleteReceiptsError) throw deleteReceiptsError;
 
-    const { error: deleteUserError } = await supabase.auth.admin.deleteUser(user.id);
-    if (deleteUserError) throw deleteUserError;
-
     await logFunctionEvent(supabase, {
       userId: user.id,
       eventType: 'account_deleted',
       severity: 'info',
       requestId,
+      metadata: { deleted_user_id: user.id },
     });
+
+    const { error: deleteUserError } = await supabase.auth.admin.deleteUser(user.id);
+    if (deleteUserError && !/not found|already/i.test(deleteUserError.message)) {
+      throw deleteUserError;
+    }
 
     return jsonResponse({ success: true, request_id: requestId });
   } catch {

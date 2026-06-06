@@ -7,11 +7,17 @@ import {
   Alert,
   ScrollView,
   Linking,
+  Share,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Download, ShieldCheck, TriangleAlert, Trash2, FileText, LogOut } from 'lucide-react-native';
-import { supabase } from '@/lib/supabase';
+import { fetchReceipts, supabase } from '@/lib/supabase';
 import { ERROR_COPY } from '@/lib/errors';
+
+function csvCell(value: unknown) {
+  const text = String(value ?? '');
+  return `"${text.replace(/"/g, '""')}"`;
+}
 
 export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
@@ -62,6 +68,31 @@ export default function SettingsScreen() {
     );
   }
 
+  async function handleExportCsv() {
+    try {
+      const receipts = await fetchReceipts();
+      const rows = [
+        ['Merchant', 'Date', 'Amount', 'Currency', 'Category', 'Business', 'Source'],
+        ...receipts.map((receipt) => [
+          receipt.merchant_name,
+          receipt.date,
+          receipt.total_amount,
+          receipt.currency,
+          receipt.category ?? '',
+          receipt.is_business ? 'Yes' : 'No',
+          receipt.source,
+        ]),
+      ];
+      const csv = rows.map((row) => row.map(csvCell).join(',')).join('\n');
+      await Share.share({
+        title: 'KeepSlip receipts CSV',
+        message: csv,
+      });
+    } catch {
+      Alert.alert('Export failed', 'Could not export receipts right now.');
+    }
+  }
+
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
       {/* App bar */}
@@ -85,7 +116,7 @@ export default function SettingsScreen() {
         {/* Export card */}
         <View style={styles.cardsSection}>
           {/* Export CSV card */}
-          <TouchableOpacity style={styles.card} activeOpacity={0.7}>
+          <TouchableOpacity style={styles.card} onPress={handleExportCsv} activeOpacity={0.7}>
             <View style={[styles.cardAvatar, { backgroundColor: '#ECFDF5' }]}>
               <Download size={18} color="#0D9488" />
             </View>

@@ -9,7 +9,7 @@ import {
 } from 'react-native';
 import { FlashList } from '@shopify/flash-list';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { useReceipts } from '@/hooks/useReceipts';
 import { ReceiptCard } from '@/components/ReceiptCard';
 import { ERROR_COPY } from '@/lib/errors';
@@ -56,6 +56,12 @@ export default function ReceiptListScreen() {
     await refresh();
     setRefreshing(false);
   }, [refresh]);
+
+  useFocusEffect(
+    useCallback(() => {
+      refresh();
+    }, [refresh])
+  );
 
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
@@ -108,9 +114,13 @@ export default function ReceiptListScreen() {
         </View>
       ) : filtered.length === 0 ? (
         <View style={styles.centered}>
-          <Text style={styles.emptyTitle}>No receipts yet</Text>
+          <Text style={styles.emptyTitle}>
+            {receipts.length === 0 ? 'No receipts yet' : `No ${activeCategory} receipts`}
+          </Text>
           <Text style={styles.emptyBody}>
-            Tap + to scan a receipt or upload a receipt file.
+            {receipts.length === 0
+              ? 'Tap + to scan a receipt or upload a receipt file.'
+              : 'Try another category or clear the filter.'}
           </Text>
         </View>
       ) : (

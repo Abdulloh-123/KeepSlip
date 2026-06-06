@@ -16,6 +16,14 @@ const corsHeaders = {
 };
 
 type SupabaseClient = ReturnType<typeof createClient>;
+type ParsedReceipt = {
+  merchant_name: string;
+  date: string;
+  total_amount: number;
+  currency: string;
+  category: string | null;
+  line_items: Array<{ description: string; amount: number }>;
+};
 
 function jsonResponse(body: Record<string, unknown>, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -34,14 +42,15 @@ async function logFunctionEvent(
     metadata?: Record<string, unknown>;
   }
 ) {
-  await supabase.from('function_events').insert({
+  const { error } = await supabase.from('function_events').insert({
     user_id: params.userId ?? null,
     function_name: 'ocr-receipt',
     event_type: params.eventType,
     severity: params.severity,
     request_id: params.requestId,
     metadata: params.metadata ?? {},
-  }).then(() => {});
+  });
+  if (error) console.error('function_events insert failed', params.requestId, error.message);
 }
 
 async function updateJob(
@@ -49,11 +58,11 @@ async function updateJob(
   jobId: string,
   updates: Record<string, unknown>
 ) {
-  await supabase
+  const { error } = await supabase
     .from('processing_jobs')
     .update({ ...updates, updated_at: new Date().toISOString() })
-    .eq('id', jobId)
-    .then(() => {});
+    .eq('id', jobId);
+  if (error) console.error('processing_jobs update failed', jobId, error.message);
 }
 
 function isValidStoragePath(storagePath: string, userId: string) {
@@ -68,6 +77,68 @@ function isValidStoragePath(storagePath: string, userId: string) {
 
 function isSupportedMimeType(mimeType: string) {
   return /^image\/(jpeg|jpg|png|webp)$/.test(mimeType) || mimeType === 'application/pdf';
+}
+
+function sanitizeLineItems(value: unknown): Array<{ description: string; amount: number }> {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => {
+      const record = item && typeof item === 'object' ? item as Record<string, unknown> : {};
+      const amount = Number(record.amount ?? 0);
+      return {
+        description: String(record.description ?? 'Item'),
+        amount: Number.isFinite(amount) ? amount : 0,
+      };
+    })
+    .filter((item) => item.description.trim().length > 0);
+}
+
+function parseReceiptJson(cleaned: string): ParsedReceipt | null {
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(cleaned);
+  } catch {
+    return null;
+  }
+
+  const totalAmount = Number(parsed.total_amount);
+  if (!Number.isFinite(totalAmount)) return null;
+
+  const merchantName = String(parsed.merchant_name ?? '').trim();
+  if (!merchantName) return null;
+
+  const date = String(parsed.date ?? new Date().toISOString().slice(0, 10));
+  const currency = String(parsed.currency ?? 'AUD').trim().toUpperCase();
+  if (!/^[A-Z]{3}$/.test(currency)) return null;
+
+  return {
+    merchant_name: merchantName,
+    date,
+    total_amount: totalAmount,
+    currency,
+    category: parsed.category ? String(parsed.category) : null,
+    line_items: sanitizeLineItems(parsed.line_items),
+  };
+}
+
+function buildAnthropicContent(base64: string, mediaType: string, prompt: string) {
+  if (mediaType === 'application/pdf') {
+    return [
+      {
+        type: 'document',
+        source: { type: 'base64', media_type: mediaType, data: base64 },
+      },
+      { type: 'text', text: prompt },
+    ];
+  }
+
+  return [
+    {
+      type: 'image',
+      source: { type: 'base64', media_type: mediaType, data: base64 },
+    },
+    { type: 'text', text: prompt },
+  ];
 }
 
 async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number) {
@@ -104,12 +175,22 @@ serve(async (req) => {
     }
     userId = user.id;
 
-    const { data: allowed } = await supabase.rpc('check_rate_limit', {
+    const { data: allowed, error: rateLimitError } = await supabase.rpc('check_rate_limit', {
       p_user_id: user.id,
       p_action: 'ocr_receipt',
       p_limit: OCR_RATE_LIMIT,
       p_window_seconds: OCR_RATE_WINDOW_SECONDS,
     });
+    if (rateLimitError) {
+      await logFunctionEvent(supabase, {
+        userId: user.id,
+        eventType: 'rate_limit_error',
+        severity: 'error',
+        requestId,
+        metadata: { message: rateLimitError.message },
+      });
+      return jsonResponse({ error: 'Rate limit unavailable', request_id: requestId }, 503);
+    }
     if (!allowed) {
       await logFunctionEvent(supabase, {
         userId: user.id,
@@ -137,6 +218,44 @@ serve(async (req) => {
       return jsonResponse({ error: 'Unsupported mime type', request_id: requestId }, 400);
     }
 
+    const { data: existingJob } = await supabase
+      .from('processing_jobs')
+      .select('id, status, receipt_id')
+      .eq('user_id', user.id)
+      .eq('job_type', 'ocr_receipt')
+      .eq('storage_path', storagePath)
+      .in('status', ['processing', 'completed'])
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (existingJob?.status === 'completed' && existingJob.receipt_id) {
+      const { data: existingReceipt } = await supabase
+        .from('receipts')
+        .select('*')
+        .eq('id', existingJob.receipt_id)
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+      if (existingReceipt) {
+        return jsonResponse({
+          ...existingReceipt,
+          receipt_id: existingReceipt.id,
+          job_id: existingJob.id,
+          request_id: requestId,
+          reused: true,
+        });
+      }
+    }
+
+    if (existingJob?.status === 'processing') {
+      return jsonResponse({
+        error: 'Receipt is already processing',
+        job_id: existingJob.id,
+        request_id: requestId,
+      }, 409);
+    }
+
     const { data: job, error: jobError } = await supabase
       .from('processing_jobs')
       .insert({
@@ -148,7 +267,12 @@ serve(async (req) => {
       })
       .select('id')
       .single();
-    if (jobError) throw jobError;
+    if (jobError) {
+      if (jobError.code === '23505') {
+        return jsonResponse({ error: 'Receipt is already processing', request_id: requestId }, 409);
+      }
+      throw jobError;
+    }
     jobId = job.id;
 
     const { data: signed, error: signErr } = await supabase.storage
@@ -163,7 +287,7 @@ serve(async (req) => {
       return jsonResponse({ error: 'Could not access file', request_id: requestId }, 400);
     }
 
-    const fileResp = await fetch(signed.signedUrl);
+    const fileResp = await fetchWithTimeout(signed.signedUrl, {}, 10_000);
     if (!fileResp.ok) {
       await updateJob(supabase, jobId, {
         status: 'failed',
@@ -237,13 +361,7 @@ If you cannot read a field, use null. For total_amount, always return a number (
           messages: [
             {
               role: 'user',
-              content: [
-                {
-                  type: 'image',
-                  source: { type: 'base64', media_type: mediaType, data: base64 },
-                },
-                { type: 'text', text: prompt },
-              ],
+              content: buildAnthropicContent(base64, mediaType, prompt),
             },
           ],
         }),
@@ -271,26 +389,49 @@ If you cannot read a field, use null. For total_amount, always return a number (
     const claudeData = await response.json();
     const text = claudeData.content?.[0]?.text ?? '{}';
     const cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
-
-    let parsed: Record<string, unknown>;
-    try {
-      parsed = JSON.parse(cleaned);
-    } catch {
-      parsed = {
-        merchant_name: 'Unknown',
-        total_amount: 0,
-        date: new Date().toISOString().slice(0, 10),
-        currency: 'AUD',
-        category: null,
-        line_items: [],
-      };
+    const parsed = parseReceiptJson(cleaned);
+    if (!parsed) {
+      await updateJob(supabase, jobId, {
+        status: 'failed',
+        error_code: 'parse_failed',
+        error_message: 'Could not parse receipt data',
+      });
+      await logFunctionEvent(supabase, {
+        userId: user.id,
+        eventType: 'parse_failed',
+        severity: 'warning',
+        requestId,
+        metadata: { storage_path: storagePath },
+      });
+      return jsonResponse({ error: 'Could not parse receipt data', request_id: requestId }, 422);
     }
 
-    parsed.total_amount = Number(parsed.total_amount ?? 0) || 0;
-    if (!Array.isArray(parsed.line_items)) parsed.line_items = [];
+    const isPdf = mimeType === 'application/pdf';
+    const { data: insertedReceipt, error: receiptError } = await supabase
+      .from('receipts')
+      .insert({
+        user_id: user.id,
+        source: 'manual_scan',
+        merchant_name: parsed.merchant_name,
+        date: parsed.date,
+        total_amount: parsed.total_amount,
+        currency: parsed.currency,
+        category: parsed.category,
+        is_business: false,
+        line_items: parsed.line_items,
+        image_url: isPdf ? null : storagePath,
+        pdf_url: isPdf ? storagePath : null,
+        email_source: null,
+        attachment_type: isPdf ? 'pdf' : 'image',
+        raw_text: null,
+      })
+      .select('*')
+      .single();
+    if (receiptError) throw receiptError;
 
     await updateJob(supabase, jobId, {
       status: 'completed',
+      receipt_id: insertedReceipt.id,
       metadata: {
         mime_type: mimeType,
         request_id: requestId,
@@ -298,7 +439,13 @@ If you cannot read a field, use null. For total_amount, always return a number (
       },
     });
 
-    return jsonResponse({ ...parsed, job_id: jobId, request_id: requestId });
+    return jsonResponse({
+      ...insertedReceipt,
+      ...parsed,
+      receipt_id: insertedReceipt.id,
+      job_id: jobId,
+      request_id: requestId,
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
     if (jobId) {

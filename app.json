@@ -17,7 +17,8 @@
       "bundleIdentifier": "com.abdullohkodirov.ireceipt",
       "infoPlist": {
         "NSCameraUsageDescription": "IReceipt uses the camera to scan paper receipts.",
-        "NSPhotoLibraryUsageDescription": "IReceipt reads photos to import receipt images."
+        "NSPhotoLibraryUsageDescription": "IReceipt reads photos to import receipt images.",
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
