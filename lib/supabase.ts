@@ -58,6 +58,23 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   },
 });
 
+export type AccountType = 'individual' | 'business';
+
+export interface AccountProfile {
+  user_id: string;
+  account_type: AccountType;
+  full_name: string;
+  work_field: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AccountProfileInput {
+  account_type: AccountType;
+  full_name: string;
+  work_field?: string | null;
+}
+
 // ── Receipts ──────────────────────────────────────────────────────────────────
 
 export async function fetchReceipts(): Promise<Receipt[]> {
@@ -68,6 +85,35 @@ export async function fetchReceipts(): Promise<Receipt[]> {
     .limit(100);
   if (error) throw error;
   return data as Receipt[];
+}
+
+export async function fetchMonthlyReceiptSummary(date = new Date()): Promise<{
+  spend: number;
+  count: number;
+}> {
+  const formatLocalDate = (value: Date) =>
+    `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(
+      value.getDate()
+    ).padStart(2, '0')}`;
+  const start = new Date(date.getFullYear(), date.getMonth(), 1);
+  const end = new Date(date.getFullYear(), date.getMonth() + 1, 1);
+  const startDate = formatLocalDate(start);
+  const endDate = formatLocalDate(end);
+
+  const { data, error } = await supabase
+    .from('receipts')
+    .select('total_amount', { count: 'exact' })
+    .gte('date', startDate)
+    .lt('date', endDate);
+  if (error) throw error;
+
+  return {
+    spend: (data ?? []).reduce(
+      (sum, receipt) => sum + Number(receipt.total_amount ?? 0),
+      0
+    ),
+    count: data?.length ?? 0,
+  };
 }
 
 export async function fetchReceipt(id: string): Promise<Receipt> {
@@ -217,4 +263,55 @@ export async function getReceiptFileUrl(path: string): Promise<string> {
     .createSignedUrl(path, 10 * 60);
   if (error) throw error;
   return data.signedUrl;
+}
+
+// ── Account profile ───────────────────────────────────────────────────────────
+
+function normalizeAccountProfile(input: AccountProfileInput) {
+  return {
+    account_type: input.account_type,
+    full_name: input.full_name.trim(),
+    work_field: input.work_field?.trim() || null,
+    updated_at: new Date().toISOString(),
+  };
+}
+
+export async function fetchAccountProfile(): Promise<AccountProfile | null> {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error('Not authenticated');
+
+  const { data, error } = await supabase
+    .from('account_profiles')
+    .select('*')
+    .eq('user_id', user.id)
+    .maybeSingle();
+  if (error) throw error;
+
+  return data as AccountProfile | null;
+}
+
+export async function upsertAccountProfile(
+  input: AccountProfileInput
+): Promise<AccountProfile> {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error('Not authenticated');
+
+  const { data, error } = await supabase
+    .from('account_profiles')
+    .upsert(
+      {
+        user_id: user.id,
+        ...normalizeAccountProfile(input),
+      },
+      { onConflict: 'user_id' }
+    )
+    .select()
+    .single();
+  if (error) throw error;
+
+  return data as AccountProfile;
 }

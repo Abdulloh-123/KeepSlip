@@ -4,9 +4,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Receipt, Search, User, Plus } from 'lucide-react-native';
 
+const TAB_BAR_HEIGHT = 72;
+const FAB_SIZE = 56;
+
 export default function TabLayout() {
   const insets = useSafeAreaInsets();
-  const router = useRouter();
 
   return (
     <Tabs
@@ -15,7 +17,7 @@ export default function TabLayout() {
         tabBarStyle: {
           backgroundColor: '#fff',
           borderTopColor: '#F3F4F6',
-          height: 56 + insets.bottom,
+          height: TAB_BAR_HEIGHT + insets.bottom,
           paddingBottom: insets.bottom,
         },
         tabBarActiveTintColor: '#0D9488',
@@ -63,62 +65,91 @@ function CustomTabBar({ state, descriptors, navigation }: any) {
   const router = useRouter();
 
   return (
-    <View style={[styles.tabBar, { paddingBottom: insets.bottom }]}>
-      {state.routes.map((route: any, index: number) => {
-        const { options } = descriptors[route.key];
-        const label = options.title ?? route.name;
-        const isFocused = state.index === index;
-        const color = isFocused ? '#0D9488' : '#9CA3AF';
-
-        const onPress = () => {
-          const event = navigation.emit({ type: 'tabPress', target: route.key, canPreventDefault: true });
-          if (!isFocused && !event.defaultPrevented) {
-            navigation.navigate(route.name);
-          }
-        };
-
-        const Icon = options.tabBarIcon?.({ color, size: 22, focused: isFocused });
-
-        // Insert FAB between Search and Settings
-        const isLast = index === state.routes.length - 1;
-
-        return (
-          <View key={route.key} style={{ flex: 1, flexDirection: 'row', alignItems: 'center' }}>
-            {/* Gap slot for FAB — between index 1 and 2 */}
-            {index === 2 && (
-              <View style={{ flex: 1, alignItems: 'center' }}>
-                <TouchableOpacity
-                  style={styles.fab}
-                  onPress={() => router.push('/add-receipt')}
-                  activeOpacity={0.85}
-                >
-                  <Plus size={24} color="#fff" />
-                </TouchableOpacity>
-              </View>
-            )}
-            <TouchableOpacity
-              style={styles.tab}
-              onPress={onPress}
-              activeOpacity={0.7}
-            >
-              {Icon}
-              <Text style={[styles.label, { color }]}>{label}</Text>
-            </TouchableOpacity>
-          </View>
-        );
-      })}
+    <View
+      style={[
+        styles.tabBar,
+        {
+          height: TAB_BAR_HEIGHT + insets.bottom,
+          paddingBottom: Math.max(insets.bottom, 8),
+        },
+      ]}
+    >
+      <View style={styles.tabSlots}>
+        {state.routes.slice(0, 2).map((route: any) => (
+          <TabButton
+            key={route.key}
+            route={route}
+            descriptors={descriptors}
+            navigation={navigation}
+            isFocused={state.routes[state.index]?.key === route.key}
+          />
+        ))}
+        <View style={styles.fabSlot}>
+          <TouchableOpacity
+            style={styles.fab}
+            onPress={() => router.push('/add-receipt')}
+            activeOpacity={0.85}
+          >
+            <Plus size={28} color="#fff" />
+          </TouchableOpacity>
+        </View>
+        {state.routes.slice(2).map((route: any) => (
+          <TabButton
+            key={route.key}
+            route={route}
+            descriptors={descriptors}
+            navigation={navigation}
+            isFocused={state.routes[state.index]?.key === route.key}
+          />
+        ))}
+      </View>
     </View>
+  );
+}
+
+function TabButton({ route, descriptors, navigation, isFocused }: any) {
+  const { options } = descriptors[route.key];
+  const label = options.title ?? route.name;
+  const color = isFocused ? '#0D9488' : '#9CA3AF';
+
+  const onPress = () => {
+    const event = navigation.emit({ type: 'tabPress', target: route.key, canPreventDefault: true });
+    if (!isFocused && !event.defaultPrevented) {
+      navigation.navigate(route.name);
+    }
+  };
+
+  const Icon = options.tabBarIcon?.({ color, size: 24, focused: isFocused });
+
+  return (
+    <TouchableOpacity
+      style={styles.tab}
+      onPress={onPress}
+      activeOpacity={0.7}
+    >
+      {Icon}
+      <Text style={[styles.label, { color }]}>{label}</Text>
+    </TouchableOpacity>
   );
 }
 
 const styles = StyleSheet.create({
   tabBar: {
-    flexDirection: 'row',
     backgroundColor: '#fff',
     borderTopWidth: 1,
     borderTopColor: '#F3F4F6',
+    shadowColor: '#0D9488',
+    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    elevation: 12,
+  },
+  tabSlots: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingTop: 8,
-    height: 68,
+    paddingHorizontal: 8,
   },
   tab: {
     flex: 1,
@@ -130,18 +161,22 @@ const styles = StyleSheet.create({
     fontFamily: 'DMSans-Medium',
     fontSize: 11,
   },
+  fabSlot: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   fab: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
+    width: FAB_SIZE,
+    height: FAB_SIZE,
+    borderRadius: FAB_SIZE / 2,
     backgroundColor: '#0D9488',
     alignItems: 'center',
     justifyContent: 'center',
     shadowColor: '#0D9488',
-    shadowOffset: { width: 0, height: 4 },
+    shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.35,
-    shadowRadius: 8,
+    shadowRadius: 14,
     elevation: 6,
-    marginBottom: 8,
   },
 });

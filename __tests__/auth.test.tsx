@@ -48,6 +48,8 @@ describe('WelcomeScreen', () => {
     const { getByText, getByPlaceholderText, getAllByText } = render(<WelcomeScreen />);
 
     fireEvent.press(getByText("Get started — it's free"));
+    fireEvent.changeText(getByPlaceholderText('Name'), 'Sam Builder');
+    fireEvent.changeText(getByPlaceholderText('Field you work in (optional)'), 'Construction');
     fireEvent.changeText(getByPlaceholderText('Email'), 'test@example.com');
     fireEvent.changeText(getByPlaceholderText('Password'), 'password123');
     fireEvent.press(getAllByText('Create account')[1]);
@@ -56,7 +58,14 @@ describe('WelcomeScreen', () => {
       expect(mockAuth.signUp).toHaveBeenCalledWith({
         email: 'test@example.com',
         password: 'password123',
-        options: { emailRedirectTo: 'ireceipt://' },
+        options: {
+          emailRedirectTo: 'ireceipt://',
+          data: {
+            account_type: 'individual',
+            full_name: 'Sam Builder',
+            work_field: 'Construction',
+          },
+        },
       })
     );
   });

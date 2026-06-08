@@ -14,6 +14,7 @@ import {
 import { useRouter } from 'expo-router';
 import * as Linking from 'expo-linking';
 import { supabase } from '@/lib/supabase';
+import type { AccountType } from '@/lib/supabase';
 import { ERROR_COPY } from '@/lib/errors';
 
 const emailRedirectTo = Linking.createURL('/');
@@ -34,6 +35,9 @@ export default function WelcomeScreen() {
   const [mode, setMode] = useState<'welcome' | 'signin' | 'signup'>('welcome');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [accountType, setAccountType] = useState<AccountType>('individual');
+  const [fullName, setFullName] = useState('');
+  const [workField, setWorkField] = useState('');
   const [loading, setLoading] = useState(false);
   const [formError, setFormError] = useState('');
 
@@ -44,13 +48,24 @@ export default function WelcomeScreen() {
       setFormError(validationError);
       return;
     }
+    if (fullName.trim().length < 2) {
+      setFormError('Enter your name so we can set up your account.');
+      return;
+    }
 
     setLoading(true);
     try {
       const { error } = await supabase.auth.signUp({
         email: email.trim().toLowerCase(),
         password,
-        options: { emailRedirectTo },
+        options: {
+          emailRedirectTo,
+          data: {
+            account_type: accountType,
+            full_name: fullName.trim(),
+            work_field: workField.trim() || null,
+          },
+        },
       });
       if (error) {
         setFormError(ERROR_COPY.signUp);
@@ -133,6 +148,54 @@ export default function WelcomeScreen() {
         <Text style={styles.formTitle}>
           {mode === 'signup' ? 'Create account' : 'Welcome back'}
         </Text>
+
+        {mode === 'signup' ? (
+          <View style={styles.profileFields}>
+            <View style={styles.segmented}>
+              {(['individual', 'business'] as const).map((type) => (
+                <TouchableOpacity
+                  key={type}
+                  style={[
+                    styles.segment,
+                    accountType === type && styles.segmentActive,
+                  ]}
+                  onPress={() => setAccountType(type)}
+                  disabled={loading}
+                  activeOpacity={0.8}
+                >
+                  <Text
+                    style={[
+                      styles.segmentText,
+                      accountType === type && styles.segmentTextActive,
+                    ]}
+                  >
+                    {type === 'individual' ? 'Individual' : 'Business'}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <TextInput
+              style={styles.input}
+              placeholder="Name"
+              placeholderTextColor="#9CA3AF"
+              autoCapitalize="words"
+              textContentType="name"
+              value={fullName}
+              onChangeText={setFullName}
+              editable={!loading}
+            />
+            <TextInput
+              style={styles.input}
+              placeholder="Field you work in (optional)"
+              placeholderTextColor="#9CA3AF"
+              autoCapitalize="words"
+              value={workField}
+              onChangeText={setWorkField}
+              editable={!loading}
+            />
+          </View>
+        ) : null}
 
         <TextInput
           style={styles.input}
@@ -269,6 +332,34 @@ const styles = StyleSheet.create({
     fontSize: 28,
     color: '#111827',
     marginBottom: 32,
+  },
+  profileFields: {
+    marginBottom: 4,
+  },
+  segmented: {
+    flexDirection: 'row',
+    backgroundColor: '#E5E7EB',
+    borderRadius: 12,
+    padding: 3,
+    marginBottom: 12,
+  },
+  segment: {
+    flex: 1,
+    borderRadius: 9,
+    paddingVertical: 11,
+    alignItems: 'center',
+  },
+  segmentActive: {
+    backgroundColor: '#fff',
+  },
+  segmentText: {
+    fontFamily: 'DMSans-Medium',
+    fontSize: 14,
+    color: '#6B7280',
+  },
+  segmentTextActive: {
+    fontFamily: 'DMSans-SemiBold',
+    color: '#0D9488',
   },
   input: {
     backgroundColor: '#fff',

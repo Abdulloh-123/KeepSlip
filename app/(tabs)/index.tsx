@@ -8,6 +8,7 @@ import {
   RefreshControl,
 } from 'react-native';
 import { FlashList } from '@shopify/flash-list';
+import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useReceipts } from '@/hooks/useReceipts';
@@ -64,9 +65,10 @@ export default function ReceiptListScreen() {
   );
 
   return (
-    <View style={[styles.screen, { paddingTop: insets.top }]}>
+    <View style={styles.screen}>
+      <StatusBar style="light" backgroundColor="#0D9488" />
       {/* Teal header */}
-      <View style={styles.header}>
+      <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
         <View style={styles.appBar}>
           <Text style={styles.appName}>KeepSlip</Text>
           <View style={styles.avatar}>
@@ -151,18 +153,18 @@ export default function ReceiptListScreen() {
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#FAFAF9',
   },
   header: {
     backgroundColor: '#0D9488',
-    paddingBottom: 24,
+    paddingBottom: 28,
   },
   appBar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 20,
-    paddingVertical: 4,
+    minHeight: 48,
   },
   appName: {
     fontFamily: 'CabinetGrotesk-Bold',
@@ -206,6 +208,8 @@ const styles = StyleSheet.create({
   },
   pillsRow: {
     backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
   },
   pillsContent: {
     paddingHorizontal: 16,

@@ -4,14 +4,22 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
+  TextInput,
   Alert,
   ScrollView,
   Linking,
   Share,
+  ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Download, ShieldCheck, TriangleAlert, Trash2, FileText, LogOut } from 'lucide-react-native';
-import { fetchReceipts, supabase } from '@/lib/supabase';
+import { Download, ShieldCheck, TriangleAlert, Trash2, FileText, LogOut, UserRound } from 'lucide-react-native';
+import {
+  fetchAccountProfile,
+  fetchReceipts,
+  supabase,
+  upsertAccountProfile,
+} from '@/lib/supabase';
+import type { AccountType } from '@/lib/supabase';
 import { ERROR_COPY } from '@/lib/errors';
 
 function csvCell(value: unknown) {
@@ -22,16 +30,91 @@ function csvCell(value: unknown) {
 export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
   const [userEmail, setUserEmail] = useState('');
+  const [accountType, setAccountType] = useState<AccountType>('individual');
+  const [fullName, setFullName] = useState('');
+  const [workField, setWorkField] = useState('');
+  const [profileLoading, setProfileLoading] = useState(true);
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [profileError, setProfileError] = useState('');
 
   useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => {
-      setUserEmail(data.user?.email ?? '');
-    });
+    let mounted = true;
+
+    async function loadAccount() {
+      setProfileLoading(true);
+      setProfileError('');
+      try {
+        const { data } = await supabase.auth.getUser();
+        const user = data.user;
+        if (!mounted) return;
+
+        setUserEmail(user?.email ?? '');
+        const metadata = user?.user_metadata ?? {};
+        const fallbackType =
+          metadata.account_type === 'business' ? 'business' : 'individual';
+        const fallbackName =
+          typeof metadata.full_name === 'string' ? metadata.full_name : '';
+        const fallbackField =
+          typeof metadata.work_field === 'string' ? metadata.work_field : '';
+
+        const profile = await fetchAccountProfile().catch(() => null);
+        if (!mounted) return;
+
+        const nextType = profile?.account_type ?? fallbackType;
+        const nextName = profile?.full_name ?? fallbackName;
+        const nextField = profile?.work_field ?? fallbackField;
+        setAccountType(nextType);
+        setFullName(nextName);
+        setWorkField(nextField);
+
+        if (!profile && user && nextName.trim()) {
+          await upsertAccountProfile({
+            account_type: nextType,
+            full_name: nextName,
+            work_field: nextField,
+          }).catch(() => undefined);
+        }
+      } catch {
+        if (mounted) setProfileError('We could not load your account details.');
+      } finally {
+        if (mounted) setProfileLoading(false);
+      }
+    }
+
+    loadAccount();
+    return () => {
+      mounted = false;
+    };
   }, []);
 
-  const initials = userEmail
+  const displayName = fullName.trim();
+  const initials = displayName
+    ? displayName.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase()
+    : userEmail
     ? userEmail.split('@')[0].slice(0, 2).toUpperCase()
     : 'U';
+
+  async function handleSaveProfile() {
+    setProfileError('');
+    if (fullName.trim().length < 2) {
+      setProfileError('Enter your name before saving.');
+      return;
+    }
+
+    setProfileSaving(true);
+    try {
+      await upsertAccountProfile({
+        account_type: accountType,
+        full_name: fullName,
+        work_field: workField,
+      });
+      Alert.alert('Saved', 'Your account details were updated.');
+    } catch {
+      setProfileError('We could not save your account details. Please try again.');
+    } finally {
+      setProfileSaving(false);
+    }
+  }
 
   async function handleSignOut() {
     Alert.alert('Sign out', 'Are you sure?', [
@@ -109,8 +192,81 @@ export default function SettingsScreen() {
             <Text style={styles.avatarText}>{initials}</Text>
           </View>
           <View>
+            <Text style={styles.profileName}>{displayName || 'Your account'}</Text>
             <Text style={styles.email}>{userEmail}</Text>
           </View>
+        </View>
+
+        <View style={styles.accountSection}>
+          <View style={styles.sectionHeader}>
+            <View style={[styles.cardAvatar, { backgroundColor: '#ECFDF5' }]}>
+              <UserRound size={18} color="#0D9488" />
+            </View>
+            <View style={styles.cardInfo}>
+              <Text style={styles.cardTitle}>Account details</Text>
+              <Text style={styles.cardSub}>Used to personalize KeepSlip</Text>
+            </View>
+          </View>
+
+          <View style={styles.segmented}>
+            {(['individual', 'business'] as const).map((type) => (
+              <TouchableOpacity
+                key={type}
+                style={[styles.segment, accountType === type && styles.segmentActive]}
+                onPress={() => setAccountType(type)}
+                disabled={profileLoading || profileSaving}
+                activeOpacity={0.8}
+              >
+                <Text
+                  style={[
+                    styles.segmentText,
+                    accountType === type && styles.segmentTextActive,
+                  ]}
+                >
+                  {type === 'individual' ? 'Individual' : 'Business'}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          <TextInput
+            style={styles.input}
+            placeholder="Name"
+            placeholderTextColor="#9CA3AF"
+            autoCapitalize="words"
+            value={fullName}
+            onChangeText={setFullName}
+            editable={!profileLoading && !profileSaving}
+          />
+          <TextInput
+            style={styles.input}
+            placeholder="Field you work in (optional)"
+            placeholderTextColor="#9CA3AF"
+            autoCapitalize="words"
+            value={workField}
+            onChangeText={setWorkField}
+            editable={!profileLoading && !profileSaving}
+          />
+
+          {profileError ? <Text style={styles.profileError}>{profileError}</Text> : null}
+
+          <TouchableOpacity
+            style={[
+              styles.saveProfileBtn,
+              (profileLoading || profileSaving) && styles.saveProfileBtnDisabled,
+            ]}
+            onPress={handleSaveProfile}
+            disabled={profileLoading || profileSaving}
+            activeOpacity={0.85}
+          >
+            {profileSaving ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={styles.saveProfileText}>
+                {profileLoading ? 'Loading account' : 'Save account details'}
+              </Text>
+            )}
+          </TouchableOpacity>
         </View>
 
         {/* Export card */}
@@ -233,6 +389,85 @@ const styles = StyleSheet.create({
     fontFamily: 'DMSans-Regular',
     fontSize: 13,
     color: '#6B7280',
+  },
+  profileName: {
+    fontFamily: 'DMSans-SemiBold',
+    fontSize: 16,
+    color: '#111827',
+    marginBottom: 2,
+  },
+  accountSection: {
+    backgroundColor: '#F8FAFC',
+    padding: 16,
+    gap: 12,
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#F1F5F9',
+    padding: 14,
+    gap: 12,
+  },
+  segmented: {
+    flexDirection: 'row',
+    backgroundColor: '#E5E7EB',
+    borderRadius: 12,
+    padding: 3,
+  },
+  segment: {
+    flex: 1,
+    borderRadius: 9,
+    paddingVertical: 10,
+    alignItems: 'center',
+  },
+  segmentActive: {
+    backgroundColor: '#fff',
+  },
+  segmentText: {
+    fontFamily: 'DMSans-Medium',
+    fontSize: 14,
+    color: '#6B7280',
+  },
+  segmentTextActive: {
+    fontFamily: 'DMSans-SemiBold',
+    color: '#0D9488',
+  },
+  input: {
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontFamily: 'DMSans-Regular',
+    fontSize: 15,
+    color: '#111827',
+  },
+  profileError: {
+    fontFamily: 'DMSans-Regular',
+    fontSize: 13,
+    color: '#DC2626',
+    lineHeight: 18,
+  },
+  saveProfileBtn: {
+    minHeight: 48,
+    borderRadius: 12,
+    backgroundColor: '#0D9488',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  saveProfileBtnDisabled: {
+    opacity: 0.7,
+  },
+  saveProfileText: {
+    fontFamily: 'DMSans-SemiBold',
+    fontSize: 14,
+    color: '#fff',
   },
   cardsSection: {
     backgroundColor: '#F8FAFC',

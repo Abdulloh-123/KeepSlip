@@ -4,9 +4,11 @@ import * as supabaseLib from '../lib/supabase';
 
 jest.mock('../lib/supabase', () => ({
   fetchReceipts: jest.fn(),
+  fetchMonthlyReceiptSummary: jest.fn(),
 }));
 
 const mockFetchReceipts = supabaseLib.fetchReceipts as jest.Mock;
+const mockFetchMonthlyReceiptSummary = supabaseLib.fetchMonthlyReceiptSummary as jest.Mock;
 
 const now = new Date();
 const thisMonthDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-15`;
@@ -26,7 +28,10 @@ const LAST_MONTH_RECEIPT = {
 };
 
 describe('useReceipts', () => {
-  beforeEach(() => jest.clearAllMocks());
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockFetchMonthlyReceiptSummary.mockResolvedValue({ spend: 0, count: 0 });
+  });
 
   it('loads receipts on mount', async () => {
     mockFetchReceipts.mockResolvedValue([JUNE_RECEIPT]);
@@ -45,12 +50,12 @@ describe('useReceipts', () => {
     expect(result.current.error?.message).toBe('network error');
   });
 
-  it('computes thisMonthSpend for current month receipts only', async () => {
+  it('uses the month-scoped summary for current month spend', async () => {
     mockFetchReceipts.mockResolvedValue([JUNE_RECEIPT, LAST_MONTH_RECEIPT]);
+    mockFetchMonthlyReceiptSummary.mockResolvedValue({ spend: 84.5, count: 1 });
     const { result } = renderHook(() => useReceipts());
 
     await waitFor(() => expect(result.current.loading).toBe(false));
-    // Only the current-month receipt should count, regardless of when the test runs.
     expect(result.current.thisMonthSpend).toBe(84.5);
     expect(result.current.thisMonthCount).toBe(1);
   });
@@ -66,11 +71,14 @@ describe('useReceipts', () => {
 
   it('refresh re-fetches receipts', async () => {
     mockFetchReceipts.mockResolvedValue([JUNE_RECEIPT]);
+    mockFetchMonthlyReceiptSummary.mockResolvedValue({ spend: 84.5, count: 1 });
     const { result } = renderHook(() => useReceipts());
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     mockFetchReceipts.mockResolvedValue([JUNE_RECEIPT, LAST_MONTH_RECEIPT]);
+    mockFetchMonthlyReceiptSummary.mockResolvedValue({ spend: 104.5, count: 2 });
     await act(async () => { await result.current.refresh(); });
     expect(result.current.receipts).toHaveLength(2);
+    expect(result.current.thisMonthSpend).toBe(104.5);
   });
 });
