@@ -23,6 +23,21 @@ function formatMonthYear(date: Date) {
   return date.toLocaleDateString('en-AU', { month: 'long', year: 'numeric' });
 }
 
+function formatMonthName(date: Date) {
+  return date.toLocaleDateString('en-AU', { month: 'long' });
+}
+
+function formatMonthlySummary(
+  receiptCount: number,
+  thisMonthCount: number,
+  date = new Date()
+) {
+  const month = formatMonthName(date);
+  if (receiptCount === 0) return `0 receipts · ${formatMonthYear(date)}`;
+  if (thisMonthCount === 0) return `No ${month} receipts · ${receiptCount} saved`;
+  return `${thisMonthCount} ${month} receipt${thisMonthCount !== 1 ? 's' : ''} · ${receiptCount} saved`;
+}
+
 function ReceiptListSkeleton() {
   return (
     <View style={styles.skeletonList}>
@@ -81,7 +96,7 @@ export default function ReceiptListScreen() {
           <Text style={styles.amtSub}>
             {loading && !refreshing
               ? `-- receipts · ${formatMonthYear(new Date())}`
-              : `${thisMonthCount} receipt${thisMonthCount !== 1 ? 's' : ''} · ${formatMonthYear(new Date())}`}
+              : formatMonthlySummary(receipts.length, thisMonthCount)}
           </Text>
         </View>
       </View>
