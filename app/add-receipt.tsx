@@ -5,11 +5,13 @@ import {
   StyleSheet,
   TouchableOpacity,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import * as DocumentPicker from 'expo-document-picker';
-import { Camera, Upload, ChevronRight } from 'lucide-react-native';
+import * as ImagePicker from 'expo-image-picker';
+import { Camera, Upload, ChevronRight, ImagePlus } from 'lucide-react-native';
 import { supabase, uploadReceiptImage } from '@/lib/supabase';
 import { ERROR_COPY } from '@/lib/errors';
 
@@ -33,6 +35,32 @@ export default function AddReceiptSheet() {
     if (result.canceled || !result.assets[0]) return;
     const asset = result.assets[0];
     await processFile(asset.uri, asset.mimeType ?? 'application/pdf');
+  }
+
+  async function handlePhotoPick() {
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) {
+      Alert.alert('Photos access needed', 'Allow photo library access to upload receipt photos.');
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      quality: 0.9,
+      exif: false,
+    });
+    if (result.canceled || !result.assets[0]) return;
+
+    const asset = result.assets[0];
+    const mimeType = asset.mimeType ?? inferImageMimeType(asset.uri);
+    await processFile(asset.uri, mimeType);
+  }
+
+  function inferImageMimeType(uri: string) {
+    const lower = uri.toLowerCase();
+    if (lower.endsWith('.png')) return 'image/png';
+    if (lower.endsWith('.webp')) return 'image/webp';
+    return 'image/jpeg';
   }
 
   async function processFile(uri: string, mimeType: string) {
@@ -103,9 +131,15 @@ export default function AddReceiptSheet() {
           <ChevronRight size={20} color="#D1D5DB" />
         </TouchableOpacity>
         <View style={styles.separator} />
+        <TouchableOpacity style={styles.row} onPress={handlePhotoPick} activeOpacity={0.7}>
+          <ImagePlus size={24} color="#0D9488" />
+          <Text style={styles.rowLabel}>Choose from Photos</Text>
+          <ChevronRight size={20} color="#D1D5DB" />
+        </TouchableOpacity>
+        <View style={styles.separator} />
         <TouchableOpacity style={styles.row} onPress={handleFilePick} activeOpacity={0.7}>
           <Upload size={24} color="#0D9488" />
-          <Text style={styles.rowLabel}>Upload File or Photo</Text>
+          <Text style={styles.rowLabel}>Upload from Files</Text>
           <ChevronRight size={20} color="#D1D5DB" />
         </TouchableOpacity>
 

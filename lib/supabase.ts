@@ -1,6 +1,7 @@
 import 'react-native-url-polyfill/auto';
 import { createClient } from '@supabase/supabase-js';
 import * as SecureStore from 'expo-secure-store';
+import { getReceiptAmount } from '@/lib/receiptAmounts';
 import type { Receipt, ReceiptInsert } from '@/types/receipt';
 
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL!;
@@ -102,14 +103,14 @@ export async function fetchMonthlyReceiptSummary(date = new Date()): Promise<{
 
   const { data, error } = await supabase
     .from('receipts')
-    .select('total_amount', { count: 'exact' })
+    .select('total_amount, line_items', { count: 'exact' })
     .gte('date', startDate)
     .lt('date', endDate);
   if (error) throw error;
 
   return {
     spend: (data ?? []).reduce(
-      (sum, receipt) => sum + Number(receipt.total_amount ?? 0),
+      (sum, receipt) => sum + getReceiptAmount(receipt.total_amount, receipt.line_items),
       0
     ),
     count: data?.length ?? 0,

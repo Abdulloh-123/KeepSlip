@@ -1,4 +1,5 @@
 import { TouchableOpacity, View, Text, StyleSheet } from 'react-native';
+import { getReceiptAmount } from '@/lib/receiptAmounts';
 import type { Receipt } from '@/types/receipt';
 
 const CATEGORY_COLORS: Record<string, string> = {
@@ -26,7 +27,11 @@ function categoryColor(category: string | null): string {
 
 function formatDate(iso: string): string {
   const d = new Date(iso);
-  return d.toLocaleDateString('en-AU', { month: 'short', day: 'numeric' });
+  const options: Intl.DateTimeFormatOptions =
+    d.getFullYear() === new Date().getFullYear()
+      ? { month: 'short', day: 'numeric' }
+      : { month: 'short', day: 'numeric', year: 'numeric' };
+  return d.toLocaleDateString('en-AU', options);
 }
 
 interface Props {
@@ -37,6 +42,7 @@ interface Props {
 export function ReceiptCard({ receipt, onPress }: Props) {
   const color = categoryColor(receipt.category);
   const sourceLabel = SOURCE_LABELS[receipt.source] ?? receipt.source.replace(/_/g, ' ');
+  const amount = getReceiptAmount(receipt.total_amount, receipt.line_items);
 
   return (
     <TouchableOpacity style={styles.card} onPress={onPress} activeOpacity={0.7}>
@@ -53,7 +59,7 @@ export function ReceiptCard({ receipt, onPress }: Props) {
           {formatDate(receipt.date)} · {sourceLabel}
         </Text>
       </View>
-      <Text style={styles.amount}>${receipt.total_amount.toFixed(2)}</Text>
+      <Text style={styles.amount}>${amount.toFixed(2)}</Text>
     </TouchableOpacity>
   );
 }

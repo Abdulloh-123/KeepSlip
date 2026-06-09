@@ -93,6 +93,11 @@ function sanitizeLineItems(value: unknown): Array<{ description: string; amount:
     .filter((item) => item.description.trim().length > 0);
 }
 
+function sumLineItems(lineItems: Array<{ description: string; amount: number }>) {
+  const total = lineItems.reduce((sum, item) => sum + item.amount, 0);
+  return Number(total.toFixed(2));
+}
+
 function parseReceiptJson(cleaned: string): ParsedReceipt | null {
   let parsed: Record<string, unknown>;
   try {
@@ -101,7 +106,17 @@ function parseReceiptJson(cleaned: string): ParsedReceipt | null {
     return null;
   }
 
-  const totalAmount = Number(parsed.total_amount);
+  const lineItems = sanitizeLineItems(parsed.line_items);
+  const lineItemSubtotal = sumLineItems(lineItems);
+  const parsedTotal = Number(parsed.total_amount);
+  const parsedSubtotal = Number(parsed.subtotal_amount ?? parsed.subtotal);
+  let totalAmount = Number.isFinite(parsedTotal) ? parsedTotal : 0;
+  if (totalAmount <= 0 && Number.isFinite(parsedSubtotal) && parsedSubtotal > 0) {
+    totalAmount = parsedSubtotal;
+  }
+  if (totalAmount <= 0 && lineItemSubtotal > 0) {
+    totalAmount = lineItemSubtotal;
+  }
   if (!Number.isFinite(totalAmount)) return null;
 
   const merchantName = String(parsed.merchant_name ?? '').trim();
@@ -117,7 +132,7 @@ function parseReceiptJson(cleaned: string): ParsedReceipt | null {
     total_amount: totalAmount,
     currency,
     category: parsed.category ? String(parsed.category) : null,
-    line_items: sanitizeLineItems(parsed.line_items),
+    line_items: lineItems,
   };
 }
 
@@ -332,7 +347,7 @@ serve(async (req) => {
       ? 'image/webp'
       : 'image/jpeg';
 
-    const prompt = `You are a receipt parser. Extract structured data from this receipt image or PDF.
+    const prompt = `You are a receipt parser for Australian receipt images and PDFs. Extract structured data.
 
 Return ONLY valid JSON with these fields (no markdown, no explanation):
 {
@@ -344,7 +359,13 @@ Return ONLY valid JSON with these fields (no markdown, no explanation):
   "line_items": [{"description": "string", "amount": number}]
 }
 
-If you cannot read a field, use null. For total_amount, always return a number (not null).`;
+Rules:
+- For numeric Australian dates like 08/09/2023, interpret them as DD/MM/YYYY, so this means 2023-09-08.
+- Use the receipt's printed purchase date. Do not use today's upload date.
+- total_amount must be the final amount charged.
+- If the printed total is hidden or unreadable but subtotal or line-item prices are visible, set total_amount to the visible subtotal or sum of line_items.
+- Never return total_amount as 0 unless the actual receipt total is clearly 0.
+- If you cannot read a field, use null. For total_amount, always return a number.`;
 
     const response = await fetchWithTimeout(
       'https://api.anthropic.com/v1/messages',

@@ -16,12 +16,17 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ArrowLeft, ExternalLink, Share2, Trash2, X } from 'lucide-react-native';
 import * as WebBrowser from 'expo-web-browser';
 import { fetchReceipt, deleteReceipt, getReceiptFileUrl } from '@/lib/supabase';
+import { getReceiptAmount } from '@/lib/receiptAmounts';
 import { ERROR_COPY } from '@/lib/errors';
 import type { Receipt } from '@/types/receipt';
 
 function formatDate(iso: string): string {
   const d = new Date(iso);
-  return d.toLocaleDateString('en-AU', { month: 'short', day: 'numeric' });
+  const options: Intl.DateTimeFormatOptions =
+    d.getFullYear() === new Date().getFullYear()
+      ? { month: 'short', day: 'numeric' }
+      : { month: 'short', day: 'numeric', year: 'numeric' };
+  return d.toLocaleDateString('en-AU', options);
 }
 
 function formatMoney(value: unknown): string {
@@ -156,8 +161,8 @@ export default function ReceiptDetailScreen() {
       amount: Number.isFinite(Number(item?.amount)) ? Number(item.amount) : 0,
     }))
     : [];
-  const receiptTotal = Number.isFinite(Number(receipt.total_amount)) ? Number(receipt.total_amount) : 0;
   const subtotal = lineItems.reduce((sum, item) => sum + item.amount, 0);
+  const receiptTotal = getReceiptAmount(receipt.total_amount, lineItems);
 
   const ImageViewerModal = (
     <Modal visible={!!imageViewer} transparent animationType="fade" onRequestClose={() => setImageViewer(null)}>
