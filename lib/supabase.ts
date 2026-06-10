@@ -88,19 +88,16 @@ export async function fetchReceipts(): Promise<Receipt[]> {
   return data as Receipt[];
 }
 
-export async function fetchMonthlyReceiptSummary(date = new Date()): Promise<{
+function formatLocalDate(value: Date) {
+  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(
+    value.getDate()
+  ).padStart(2, '0')}`;
+}
+
+async function fetchReceiptSummaryBetween(startDate: string, endDate: string): Promise<{
   spend: number;
   count: number;
 }> {
-  const formatLocalDate = (value: Date) =>
-    `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(
-      value.getDate()
-    ).padStart(2, '0')}`;
-  const start = new Date(date.getFullYear(), date.getMonth(), 1);
-  const end = new Date(date.getFullYear(), date.getMonth() + 1, 1);
-  const startDate = formatLocalDate(start);
-  const endDate = formatLocalDate(end);
-
   const { data, error } = await supabase
     .from('receipts')
     .select('total_amount, line_items', { count: 'exact' })
@@ -115,6 +112,18 @@ export async function fetchMonthlyReceiptSummary(date = new Date()): Promise<{
     ),
     count: data?.length ?? 0,
   };
+}
+
+export async function fetchMonthlyReceiptSummary(date = new Date()) {
+  const start = new Date(date.getFullYear(), date.getMonth(), 1);
+  const end = new Date(date.getFullYear(), date.getMonth() + 1, 1);
+  return fetchReceiptSummaryBetween(formatLocalDate(start), formatLocalDate(end));
+}
+
+export async function fetchYearlyReceiptSummary(date = new Date()) {
+  const start = new Date(date.getFullYear(), 0, 1);
+  const end = new Date(date.getFullYear() + 1, 0, 1);
+  return fetchReceiptSummaryBetween(formatLocalDate(start), formatLocalDate(end));
 }
 
 export async function fetchReceipt(id: string): Promise<Receipt> {
@@ -183,32 +192,73 @@ export async function deleteReceipt(id: string): Promise<void> {
 
 export async function searchReceipts(query: string): Promise<Receipt[]> {
   const trimmed = query.trim();
+  if (!trimmed) return [];
+
   const amountText = trimmed.replace(/[^0-9.]/g, '');
   const amount = amountText ? Number(amountText) : NaN;
+  const pattern = `%${trimmed}%`;
 
-  const { data, error } = await supabase
-    .from('receipts')
-    .select('*')
-    .textSearch('search_vector', trimmed, { type: 'websearch' })
-    .order('date', { ascending: false })
-    .limit(50);
-  if (error) throw error;
+  const queries = [
+    supabase
+      .from('receipts')
+      .select('*')
+      .textSearch('search_vector', trimmed, { type: 'websearch' })
+      .order('date', { ascending: false })
+      .limit(50),
+    supabase
+      .from('receipts')
+      .select('*')
+      .ilike('merchant_name', pattern)
+      .order('date', { ascending: false })
+      .limit(50),
+    supabase
+      .from('receipts')
+      .select('*')
+      .ilike('category', pattern)
+      .order('date', { ascending: false })
+      .limit(50),
+    supabase
+      .from('receipts')
+      .select('*')
+      .ilike('raw_text', pattern)
+      .order('date', { ascending: false })
+      .limit(50),
+  ];
 
-  if (!Number.isFinite(amount)) return data as Receipt[];
+  if (Number.isFinite(amount)) {
+    queries.push(
+      supabase
+        .from('receipts')
+        .select('*')
+        .eq('total_amount', amount)
+        .order('date', { ascending: false })
+        .limit(50)
+    );
+  }
 
-  const { data: amountData, error: amountError } = await supabase
-    .from('receipts')
-    .select('*')
-    .eq('total_amount', amount)
-    .order('date', { ascending: false })
-    .limit(50);
-  if (amountError) throw amountError;
+  const results = await Promise.all(
+    queries.map(async (receiptQuery) => {
+      const { data, error } = await receiptQuery;
+      return { data: (data ?? []) as Receipt[], error };
+    })
+  );
+
+  const successful = results.filter((result) => !result.error);
+  if (successful.length === 0) {
+    throw results.find((result) => result.error)?.error ?? new Error('Search failed');
+  }
 
   const byId = new Map<string, Receipt>();
-  for (const receipt of [...(data as Receipt[]), ...(amountData as Receipt[])]) {
-    byId.set(receipt.id, receipt);
+  for (const result of successful) {
+    for (const receipt of result.data) {
+      byId.set(receipt.id, receipt);
+    }
   }
-  return Array.from(byId.values()).sort((a, b) => b.date.localeCompare(a.date));
+  return Array.from(byId.values()).sort((a, b) => {
+    const dateCompare = b.date.localeCompare(a.date);
+    if (dateCompare !== 0) return dateCompare;
+    return (b.created_at ?? '').localeCompare(a.created_at ?? '');
+  });
 }
 
 // ── Storage ───────────────────────────────────────────────────────────────────

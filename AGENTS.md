@@ -44,6 +44,9 @@ All font choices, colors, spacing, and aesthetic direction are defined there.
 Do not deviate without explicit user approval.
 In QA mode, flag any code that doesn't match DESIGN.md.
 
+## User workflow preference
+For Git and release operations, do not run commit, push, EAS build, or EAS submit commands automatically unless the user explicitly asks you to run them in that moment. After code changes, provide copy-paste commands for the user to run manually.
+
 ## Skill routing
 
 When the user's request matches an available skill, invoke it via the Skill tool. When in doubt, invoke the skill.

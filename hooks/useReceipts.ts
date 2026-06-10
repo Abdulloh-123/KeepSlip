@@ -1,5 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
-import { fetchMonthlyReceiptSummary, fetchReceipts } from '@/lib/supabase';
+import {
+  fetchMonthlyReceiptSummary,
+  fetchReceipts,
+  fetchYearlyReceiptSummary,
+} from '@/lib/supabase';
 import type { Receipt } from '@/types/receipt';
 
 export function useReceipts() {
@@ -8,18 +12,23 @@ export function useReceipts() {
   const [error, setError] = useState<Error | null>(null);
   const [thisMonthSpend, setThisMonthSpend] = useState(0);
   const [thisMonthCount, setThisMonthCount] = useState(0);
+  const [thisYearSpend, setThisYearSpend] = useState(0);
+  const [thisYearCount, setThisYearCount] = useState(0);
 
   const load = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
-      const [data, summary] = await Promise.all([
+      const [data, monthSummary, yearSummary] = await Promise.all([
         fetchReceipts(),
         fetchMonthlyReceiptSummary(),
+        fetchYearlyReceiptSummary(),
       ]);
       setReceipts(data);
-      setThisMonthSpend(summary.spend);
-      setThisMonthCount(summary.count);
+      setThisMonthSpend(monthSummary.spend);
+      setThisMonthCount(monthSummary.count);
+      setThisYearSpend(yearSummary.spend);
+      setThisYearCount(yearSummary.count);
     } catch (e) {
       setError(e as Error);
     } finally {
@@ -29,5 +38,14 @@ export function useReceipts() {
 
   useEffect(() => { load(); }, [load]);
 
-  return { receipts, loading, error, refresh: load, thisMonthSpend, thisMonthCount };
+  return {
+    receipts,
+    loading,
+    error,
+    refresh: load,
+    thisMonthSpend,
+    thisMonthCount,
+    thisYearSpend,
+    thisYearCount,
+  };
 }
