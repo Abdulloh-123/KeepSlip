@@ -3,6 +3,7 @@ import { View, TouchableOpacity, StyleSheet, Text } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Receipt, Search, User, Plus } from 'lucide-react-native';
+import { trackEvent } from '@/lib/analytics';
 
 const TAB_BAR_HEIGHT = 72;
 const FAB_SIZE = 56;
@@ -87,7 +88,10 @@ function CustomTabBar({ state, descriptors, navigation }: any) {
         <View style={styles.fabSlot}>
           <TouchableOpacity
             style={styles.fab}
-            onPress={() => router.push('/add-receipt')}
+            onPress={() => {
+              void trackEvent('add_receipt_opened', {}, 'tabs');
+              router.push('/add-receipt');
+            }}
             activeOpacity={0.85}
           >
             <Plus size={28} color="#fff" />
@@ -115,6 +119,7 @@ function TabButton({ route, descriptors, navigation, isFocused }: any) {
   const onPress = () => {
     const event = navigation.emit({ type: 'tabPress', target: route.key, canPreventDefault: true });
     if (!isFocused && !event.defaultPrevented) {
+      void trackEvent('tab_selected', { tab: route.name }, 'tabs');
       navigation.navigate(route.name);
     }
   };

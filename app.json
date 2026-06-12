@@ -16,8 +16,8 @@
       "supportsTablet": false,
       "bundleIdentifier": "com.abdullohkodirov.ireceipt",
       "infoPlist": {
-        "NSCameraUsageDescription": "IReceipt uses the camera to scan paper receipts.",
-        "NSPhotoLibraryUsageDescription": "IReceipt reads photos to import receipt images.",
+        "NSCameraUsageDescription": "KeepSlip uses the camera to scan paper receipts.",
+        "NSPhotoLibraryUsageDescription": "KeepSlip reads photos to import receipt images.",
         "ITSAppUsesNonExemptEncryption": false
       }
     },
@@ -42,7 +42,7 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "IReceipt uses the camera to scan paper receipts."
+          "cameraPermission": "KeepSlip uses the camera to scan paper receipts."
         }
       ],
       [

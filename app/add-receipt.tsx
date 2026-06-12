@@ -14,8 +14,10 @@ import * as ImagePicker from 'expo-image-picker';
 import { Camera, Upload, ChevronRight, ImagePlus } from 'lucide-react-native';
 import { supabase, uploadReceiptImage } from '@/lib/supabase';
 import { ERROR_COPY } from '@/lib/errors';
+import { trackError, trackEvent } from '@/lib/analytics';
 
 type Step = 'choose' | 'processing' | 'error';
+type UploadMethod = 'files' | 'photos';
 
 export default function AddReceiptSheet() {
   const insets = useSafeAreaInsets();
@@ -24,36 +26,54 @@ export default function AddReceiptSheet() {
   const [status, setStatus] = useState('');
 
   function handleCameraScan() {
+    void trackEvent('receipt_add_method_selected', { method: 'camera' }, 'add_receipt');
     router.replace('/scan');
   }
 
   async function handleFilePick() {
-    const result = await DocumentPicker.getDocumentAsync({
-      type: ['image/*', 'application/pdf'],
-      copyToCacheDirectory: true,
-    });
-    if (result.canceled || !result.assets[0]) return;
-    const asset = result.assets[0];
-    await processFile(asset.uri, asset.mimeType ?? 'application/pdf');
+    try {
+      void trackEvent('receipt_add_method_selected', { method: 'files' }, 'add_receipt');
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ['image/*', 'application/pdf'],
+        copyToCacheDirectory: true,
+      });
+      if (result.canceled || !result.assets[0]) return;
+      const asset = result.assets[0];
+      await processFile(asset.uri, asset.mimeType ?? 'application/pdf', 'files');
+    } catch (error) {
+      void trackError(error, { screen: 'add_receipt', properties: { method: 'files' } });
+      setStatus(ERROR_COPY.upload);
+      setStep('error');
+    }
   }
 
   async function handlePhotoPick() {
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!permission.granted) {
-      Alert.alert('Photos access needed', 'Allow photo library access to upload receipt photos.');
-      return;
+    try {
+      void trackEvent('receipt_add_method_selected', { method: 'photos' }, 'add_receipt');
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      void trackEvent('photo_permission_result', {
+        granted: permission.granted,
+      }, 'add_receipt');
+      if (!permission.granted) {
+        Alert.alert('Photos access needed', 'Allow photo library access to upload receipt photos.');
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        quality: 0.9,
+        exif: false,
+      });
+      if (result.canceled || !result.assets[0]) return;
+
+      const asset = result.assets[0];
+      const mimeType = asset.mimeType ?? inferImageMimeType(asset.uri);
+      await processFile(asset.uri, mimeType, 'photos');
+    } catch (error) {
+      void trackError(error, { screen: 'add_receipt', properties: { method: 'photos' } });
+      setStatus(ERROR_COPY.upload);
+      setStep('error');
     }
-
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      quality: 0.9,
-      exif: false,
-    });
-    if (result.canceled || !result.assets[0]) return;
-
-    const asset = result.assets[0];
-    const mimeType = asset.mimeType ?? inferImageMimeType(asset.uri);
-    await processFile(asset.uri, mimeType);
   }
 
   function inferImageMimeType(uri: string) {
@@ -63,10 +83,14 @@ export default function AddReceiptSheet() {
     return 'image/jpeg';
   }
 
-  async function processFile(uri: string, mimeType: string) {
+  async function processFile(uri: string, mimeType: string, method: UploadMethod) {
     setStep('processing');
     setStatus('Uploading...');
     try {
+      void trackEvent('receipt_upload_started', {
+        method,
+        file_type: mimeType.includes('pdf') ? 'pdf' : 'image',
+      }, 'add_receipt');
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('Not authenticated');
 
@@ -79,8 +103,20 @@ export default function AddReceiptSheet() {
       if (error) throw error;
       if (!data?.receipt_id) throw new Error('Receipt was not saved');
 
+      void trackEvent('receipt_upload_succeeded', {
+        method,
+        file_type: mimeType.includes('pdf') ? 'pdf' : 'image',
+      }, 'add_receipt');
       router.replace(`/receipt/${data.receipt_id}`);
-    } catch {
+    } catch (error) {
+      void trackError(error, {
+        screen: 'add_receipt',
+        properties: {
+          method,
+          file_type: mimeType.includes('pdf') ? 'pdf' : 'image',
+        },
+      });
+      void trackEvent('receipt_upload_failed', { method }, 'add_receipt');
       setStatus(ERROR_COPY.upload);
       setStep('error');
     }

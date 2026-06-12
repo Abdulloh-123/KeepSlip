@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -13,6 +13,7 @@ import { useRouter } from 'expo-router';
 import { X, CheckCircle } from 'lucide-react-native';
 import { supabase, uploadReceiptImage } from '@/lib/supabase';
 import { ERROR_COPY } from '@/lib/errors';
+import { trackError, trackEvent } from '@/lib/analytics';
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 const FRAME_W = SCREEN_W * 0.82;
@@ -29,12 +30,28 @@ export default function ScanScreen() {
   const [insertedId, setInsertedId] = useState<string | null>(null);
   const [summary, setSummary] = useState<{ merchant: string; amount: number } | null>(null);
 
+  useEffect(() => {
+    void trackEvent('scan_screen_opened', {}, 'scan');
+  }, []);
+
+  async function handleRequestPermission() {
+    try {
+      const response = await requestPermission();
+      void trackEvent('camera_permission_result', {
+        granted: response.granted,
+      }, 'scan');
+    } catch (error) {
+      void trackError(error, { screen: 'scan', properties: { phase: 'camera_permission' } });
+    }
+  }
+
   async function handleCapture() {
     if (!cameraRef.current) return;
     setPhase('processing');
     setStatus('Uploading…');
 
     try {
+      void trackEvent('receipt_scan_started', {}, 'scan');
       const photo = await cameraRef.current.takePictureAsync({ quality: 0.85, skipProcessing: false });
       if (!photo) throw new Error('Capture failed');
 
@@ -56,7 +73,12 @@ export default function ScanScreen() {
       });
       setInsertedId(data.receipt_id);
       setPhase('success');
-    } catch {
+      void trackEvent('receipt_scan_succeeded', {
+        has_amount: Number(data.total_amount ?? 0) > 0,
+      }, 'scan');
+    } catch (error) {
+      void trackError(error, { screen: 'scan', properties: { phase: 'capture_or_ocr' } });
+      void trackEvent('receipt_scan_failed', {}, 'scan');
       setStatus(ERROR_COPY.scan);
       setPhase('error');
     }
@@ -69,7 +91,7 @@ export default function ScanScreen() {
       <View style={[styles.screen, styles.center]}>
         <Text style={styles.permTitle}>Camera access needed</Text>
         <Text style={styles.permSub}>Allow camera to scan receipts.</Text>
-        <TouchableOpacity style={styles.actionBtn} onPress={requestPermission} activeOpacity={0.85}>
+        <TouchableOpacity style={styles.actionBtn} onPress={handleRequestPermission} activeOpacity={0.85}>
           <Text style={styles.actionBtnText}>Allow Camera</Text>
         </TouchableOpacity>
         <TouchableOpacity onPress={() => router.back()} activeOpacity={0.7}>
@@ -141,7 +163,8 @@ export default function ScanScreen() {
         style={StyleSheet.absoluteFill}
         facing="back"
         onCameraReady={() => {}}
-        onMountError={() => {
+        onMountError={(error) => {
+          void trackError(error, { screen: 'scan', properties: { phase: 'camera_mount' } });
           Alert.alert('Camera unavailable', 'We could not start the camera. Please try again.');
           router.back();
         }}

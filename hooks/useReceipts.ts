@@ -4,6 +4,7 @@ import {
   fetchReceipts,
   fetchYearlyReceiptSummary,
 } from '@/lib/supabase';
+import { trackError } from '@/lib/analytics';
 import type { Receipt } from '@/types/receipt';
 
 export function useReceipts() {
@@ -31,6 +32,7 @@ export function useReceipts() {
       setThisYearCount(yearSummary.count);
     } catch (e) {
       setError(e as Error);
+      void trackError(e, { screen: 'receipts_home', properties: { phase: 'load_receipts' } });
     } finally {
       setLoading(false);
     }

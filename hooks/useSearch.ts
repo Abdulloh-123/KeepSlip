@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { searchReceipts } from '@/lib/supabase';
+import { trackError, trackEvent } from '@/lib/analytics';
 import type { Receipt } from '@/types/receipt';
 
 export function useSearch(query: string, retryKey = 0) {
@@ -27,10 +28,21 @@ export function useSearch(query: string, retryKey = 0) {
         const data = await searchReceipts(query);
         if (seq !== requestSeq.current) return;
         setResults(data);
+        void trackEvent('search_completed', {
+          query_length: query.trim().length,
+          result_count: data.length,
+        }, 'search');
       } catch (e) {
         if (seq !== requestSeq.current) return;
         setResults([]);
         setError(e as Error);
+        void trackError(e, {
+          screen: 'search',
+          properties: {
+            query_length: query.trim().length,
+            retry_key: retryKey,
+          },
+        });
       } finally {
         if (seq === requestSeq.current) setLoading(false);
       }

@@ -21,6 +21,7 @@ import {
 } from '@/lib/supabase';
 import type { AccountType } from '@/lib/supabase';
 import { ERROR_COPY } from '@/lib/errors';
+import { trackError, trackEvent } from '@/lib/analytics';
 
 function csvCell(value: unknown) {
   const text = String(value ?? '');
@@ -74,7 +75,11 @@ export default function SettingsScreen() {
             work_field: nextField,
           }).catch(() => undefined);
         }
-      } catch {
+      } catch (error) {
+        void trackError(error, {
+          screen: 'settings',
+          properties: { phase: 'load_account' },
+        });
         if (mounted) setProfileError('We could not load your account details.');
       } finally {
         if (mounted) setProfileLoading(false);
@@ -103,13 +108,23 @@ export default function SettingsScreen() {
 
     setProfileSaving(true);
     try {
+      void trackEvent('profile_save_started', {
+        account_type: accountType,
+        has_work_field: Boolean(workField.trim()),
+      }, 'settings');
       await upsertAccountProfile({
         account_type: accountType,
         full_name: fullName,
         work_field: workField,
       });
+      void trackEvent('profile_save_succeeded', { account_type: accountType }, 'settings');
       Alert.alert('Saved', 'Your account details were updated.');
-    } catch {
+    } catch (error) {
+      void trackError(error, {
+        screen: 'settings',
+        properties: { phase: 'save_profile', account_type: accountType },
+      });
+      void trackEvent('profile_save_failed', { account_type: accountType }, 'settings');
       setProfileError('We could not save your account details. Please try again.');
     } finally {
       setProfileSaving(false);
@@ -123,6 +138,7 @@ export default function SettingsScreen() {
         text: 'Sign out',
         style: 'destructive',
         onPress: async () => {
+          void trackEvent('sign_out_started', {}, 'settings');
           await supabase.auth.signOut();
         },
       },
@@ -139,11 +155,15 @@ export default function SettingsScreen() {
           text: 'Delete',
           style: 'destructive',
           onPress: async () => {
+            void trackEvent('account_delete_started', {}, 'settings');
             const { error } = await supabase.functions.invoke('delete-account');
             if (error) {
+              void trackError(error, { screen: 'settings', properties: { phase: 'delete_account' } });
+              void trackEvent('account_delete_failed', {}, 'settings');
               Alert.alert('Delete failed', ERROR_COPY.deleteAccount);
               return;
             }
+            void trackEvent('account_delete_succeeded', {}, 'settings');
             await supabase.auth.signOut();
           },
         },
@@ -153,6 +173,7 @@ export default function SettingsScreen() {
 
   async function handleExportCsv() {
     try {
+      void trackEvent('receipts_export_started', {}, 'settings');
       const receipts = await fetchReceipts();
       const rows = [
         ['Merchant', 'Date', 'Amount', 'Currency', 'Category', 'Business', 'Source'],
@@ -171,7 +192,12 @@ export default function SettingsScreen() {
         title: 'KeepSlip receipts CSV',
         message: csv,
       });
-    } catch {
+      void trackEvent('receipts_export_succeeded', {
+        receipt_count: receipts.length,
+      }, 'settings');
+    } catch (error) {
+      void trackError(error, { screen: 'settings', properties: { phase: 'export_csv' } });
+      void trackEvent('receipts_export_failed', {}, 'settings');
       Alert.alert('Export failed', 'Could not export receipts right now.');
     }
   }

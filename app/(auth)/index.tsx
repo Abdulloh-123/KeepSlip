@@ -16,6 +16,7 @@ import * as Linking from 'expo-linking';
 import { supabase } from '@/lib/supabase';
 import type { AccountType } from '@/lib/supabase';
 import { ERROR_COPY } from '@/lib/errors';
+import { trackError, trackEvent } from '@/lib/analytics';
 
 const emailRedirectTo = Linking.createURL('/');
 
@@ -46,15 +47,21 @@ export default function WelcomeScreen() {
     const validationError = validateAuthForm(email, password);
     if (validationError) {
       setFormError(validationError);
+      void trackEvent('auth_signup_failed', { reason: 'validation' }, 'auth');
       return;
     }
     if (fullName.trim().length < 2) {
       setFormError('Enter your name so we can set up your account.');
+      void trackEvent('auth_signup_failed', { reason: 'missing_name' }, 'auth');
       return;
     }
 
     setLoading(true);
     try {
+      void trackEvent('auth_signup_started', {
+        account_type: accountType,
+        has_work_field: Boolean(workField.trim()),
+      }, 'auth');
       const { error } = await supabase.auth.signUp({
         email: email.trim().toLowerCase(),
         password,
@@ -69,11 +76,19 @@ export default function WelcomeScreen() {
       });
       if (error) {
         setFormError(ERROR_COPY.signUp);
+        void trackError(error, {
+          screen: 'auth',
+          properties: { mode: 'signup', account_type: accountType },
+        });
+        void trackEvent('auth_signup_failed', { reason: 'provider_error' }, 'auth');
       } else {
+        void trackEvent('auth_signup_succeeded', { account_type: accountType }, 'auth');
         Alert.alert('Check your email', 'We sent you a confirmation link.');
       }
-    } catch {
+    } catch (error) {
       setFormError(ERROR_COPY.signUp);
+      void trackError(error, { screen: 'auth', properties: { mode: 'signup' } });
+      void trackEvent('auth_signup_failed', { reason: 'unexpected_error' }, 'auth');
     } finally {
       setLoading(false);
     }
@@ -84,20 +99,28 @@ export default function WelcomeScreen() {
     const validationError = validateAuthForm(email, password);
     if (validationError) {
       setFormError(validationError);
+      void trackEvent('auth_signin_failed', { reason: 'validation' }, 'auth');
       return;
     }
 
     setLoading(true);
     try {
+      void trackEvent('auth_signin_started', {}, 'auth');
       const { error } = await supabase.auth.signInWithPassword({
         email: email.trim().toLowerCase(),
         password,
       });
       if (error) {
         setFormError(ERROR_COPY.auth);
+        void trackError(error, { screen: 'auth', properties: { mode: 'signin' } });
+        void trackEvent('auth_signin_failed', { reason: 'provider_error' }, 'auth');
+      } else {
+        void trackEvent('auth_signin_succeeded', {}, 'auth');
       }
-    } catch {
+    } catch (error) {
       setFormError(ERROR_COPY.auth);
+      void trackError(error, { screen: 'auth', properties: { mode: 'signin' } });
+      void trackEvent('auth_signin_failed', { reason: 'unexpected_error' }, 'auth');
     } finally {
       setLoading(false);
     }

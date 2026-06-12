@@ -12,6 +12,7 @@ import * as SecureStore from 'expo-secure-store';
 import { StatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { supabase } from '@/lib/supabase';
+import { installGlobalErrorHandler, trackError, trackEvent } from '@/lib/analytics';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -31,6 +32,11 @@ export default function RootLayout() {
     'CabinetGrotesk-Medium': require('../assets/fonts/CabinetGrotesk-Medium.ttf'),
     'CabinetGrotesk-Bold': require('../assets/fonts/CabinetGrotesk-Bold.ttf'),
   });
+
+  useEffect(() => {
+    installGlobalErrorHandler();
+    void trackEvent('app_open', {}, 'root');
+  }, []);
 
   useEffect(() => {
     if (fontsLoaded && authChecked) {
@@ -60,17 +66,40 @@ export default function RootLayout() {
       }
     }
 
-    supabase.auth.getSession().then(async ({ data }) => {
-      if (!mounted) return;
-      await routeForSession(data.session);
-      setAuthChecked(true);
-    });
+    supabase.auth.getSession()
+      .then(async ({ data }) => {
+        if (!mounted) return;
+        await routeForSession(data.session);
+        setAuthChecked(true);
+      })
+      .catch((error) => {
+        if (!mounted) return;
+        void trackError(error, {
+          screen: 'root',
+          severity: 'fatal',
+          properties: { phase: 'get_session' },
+        });
+        setAuthChecked(true);
+      });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (_event, session) => {
+      async (event, session) => {
         if (!mounted) return;
-        await routeForSession(session);
-        setAuthChecked(true);
+        try {
+          void trackEvent('auth_state_changed', {
+            event,
+            signed_in: Boolean(session),
+          }, 'root');
+          await routeForSession(session);
+          setAuthChecked(true);
+        } catch (error) {
+          void trackError(error, {
+            screen: 'root',
+            severity: 'error',
+            properties: { phase: 'auth_state_change', event },
+          });
+          setAuthChecked(true);
+        }
       }
     );
     return () => {

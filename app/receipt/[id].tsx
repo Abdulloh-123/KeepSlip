@@ -18,6 +18,7 @@ import * as WebBrowser from 'expo-web-browser';
 import { fetchReceipt, deleteReceipt, getReceiptFileUrl } from '@/lib/supabase';
 import { getReceiptAmount } from '@/lib/receiptAmounts';
 import { ERROR_COPY } from '@/lib/errors';
+import { trackError, trackEvent } from '@/lib/analytics';
 import type { Receipt } from '@/types/receipt';
 
 function formatDate(iso: string): string {
@@ -55,9 +56,17 @@ export default function ReceiptDetailScreen() {
     try {
       const data = await fetchReceipt(id);
       setReceipt(data);
+      void trackEvent('receipt_detail_loaded', {
+        has_file: Boolean(data.image_url || data.pdf_url),
+        has_line_items: Array.isArray(data.line_items) && data.line_items.length > 0,
+      }, 'receipt_detail');
     } catch (e: any) {
       setReceipt(null);
       setLoadError(e?.code === 'PGRST116' ? 'not-found' : 'failed');
+      void trackError(e, {
+        screen: 'receipt_detail',
+        properties: { phase: 'load_receipt', not_found: e?.code === 'PGRST116' },
+      });
     } finally {
       setLoading(false);
     }
@@ -70,10 +79,14 @@ export default function ReceiptDetailScreen() {
   async function handleShare() {
     if (!receipt) return;
     try {
+      void trackEvent('receipt_share_started', {}, 'receipt_detail');
       await Share.share({
         message: `${receipt.merchant_name} — $${formatMoney(receipt.total_amount)} on ${receipt.date}`,
       });
-    } catch {}
+      void trackEvent('receipt_share_succeeded', {}, 'receipt_detail');
+    } catch (error) {
+      void trackError(error, { screen: 'receipt_detail', properties: { phase: 'share_receipt' } });
+    }
   }
 
   async function handleDelete() {
@@ -84,9 +97,13 @@ export default function ReceiptDetailScreen() {
         style: 'destructive',
         onPress: async () => {
           try {
+            void trackEvent('receipt_delete_started', {}, 'receipt_detail');
             await deleteReceipt(id!);
+            void trackEvent('receipt_delete_succeeded', {}, 'receipt_detail');
             router.back();
-          } catch {
+          } catch (error) {
+            void trackError(error, { screen: 'receipt_detail', properties: { phase: 'delete_receipt' } });
+            void trackEvent('receipt_delete_failed', {}, 'receipt_detail');
             Alert.alert('Delete failed', ERROR_COPY.deleteReceipt);
           }
         },
@@ -99,13 +116,21 @@ export default function ReceiptDetailScreen() {
     try {
       const path = receipt.pdf_url ?? receipt.image_url;
       if (!path) return;
+      void trackEvent('original_receipt_open_started', {
+        file_type: receipt.pdf_url ? 'pdf' : 'image',
+      }, 'receipt_detail');
       const url = await getReceiptFileUrl(path);
       if (receipt.pdf_url) {
         await WebBrowser.openBrowserAsync(url, { presentationStyle: WebBrowser.WebBrowserPresentationStyle.PAGE_SHEET });
       } else {
         setImageViewer(url);
       }
-    } catch {
+      void trackEvent('original_receipt_open_succeeded', {
+        file_type: receipt.pdf_url ? 'pdf' : 'image',
+      }, 'receipt_detail');
+    } catch (error) {
+      void trackError(error, { screen: 'receipt_detail', properties: { phase: 'open_original' } });
+      void trackEvent('original_receipt_open_failed', {}, 'receipt_detail');
       Alert.alert('File unavailable', ERROR_COPY.originalFile);
     }
   }
