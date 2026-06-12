@@ -132,7 +132,7 @@ export default function WelcomeScreen() {
       <View style={styles.container}>
         <View style={styles.hero}>
           <View style={styles.logoMark}>
-            <Text style={styles.logoText}>IR</Text>
+            <Text style={styles.logoText}>KS</Text>
           </View>
           <Text style={styles.headline}>All your receipts,{'\n'}one place.</Text>
           <Text style={styles.sub}>
